@@ -5,22 +5,25 @@ namespace Database\Seeders;
 use App\Enums\InsuranceType;
 use App\Enums\PackageType;
 use App\Enums\PriceUnit;
-use App\Enums\UserRole;
 use App\Models\Destination;
 use App\Models\Insurance;
 use App\Models\Package;
-use App\Models\User;
 use Illuminate\Database\Seeder;
 
 /**
  * Catalogo dimostrativo "solo land" in Egitto: soggiorni, escursioni e
- * transfer, più un'agenzia di prova. Nomi di hotel e strutture di fantasia.
+ * transfer. Nomi di hotel e strutture di fantasia. Non crea utenti.
  */
 class DemoCatalogSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->seedAgency();
+        if (Package::withTrashed()->where('slug', 'hurghada-all-inclusive')->exists()) {
+            $this->command?->warn('Catalogo demo già presente: nessuna modifica.');
+
+            return;
+        }
+
         $insurances = $this->seedInsurances();
 
         foreach ($this->catalog() as $data) {
@@ -54,32 +57,6 @@ class DemoCatalogSeeder extends Seeder
                 }
             }
         }
-    }
-
-    private function seedAgency(): void
-    {
-        $user = User::firstOrCreate(['email' => 'agenzia@tourflow.test'], [
-            'name' => 'Mario Rossi',
-            'phone' => '+39 333 1111111',
-            'password' => 'password',
-            'role' => UserRole::Agency,
-        ]);
-
-        $user->agency()->firstOrCreate([], [
-            'company_name' => 'Viaggi Sole Srl',
-            'vat_number' => '09876543210',
-            'tax_code' => '09876543210',
-            'address' => 'Corso Italia 25',
-            'city' => 'Milano',
-            'zip_code' => '20122',
-            'province' => 'MI',
-            'phone' => '+39 02 9876543',
-            'email' => 'info@viaggisole.test',
-            'pec' => 'viaggisole@pec.test',
-            'sdi_code' => 'M5UXCR1',
-            'contact_person' => 'Mario Rossi',
-            'license_number' => 'AUT-MI-2019-123',
-        ]);
     }
 
     /**

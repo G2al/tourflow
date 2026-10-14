@@ -30,6 +30,9 @@ class DatabaseSeeder extends Seeder
             'vat_number' => '01234567890',
         ]);
 
-        $this->call(DemoCatalogSeeder::class);
+        $this->call([
+            DemoAgencySeeder::class,
+            DemoCatalogSeeder::class,
+        ]);
     }
 }
