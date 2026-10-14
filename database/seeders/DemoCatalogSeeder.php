@@ -1,0 +1,398 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Enums\InsuranceType;
+use App\Enums\PackageType;
+use App\Enums\PriceUnit;
+use App\Enums\UserRole;
+use App\Models\Destination;
+use App\Models\Insurance;
+use App\Models\Package;
+use App\Models\User;
+use Illuminate\Database\Seeder;
+
+/**
+ * Catalogo dimostrativo "solo land" in Egitto: soggiorni, escursioni e
+ * transfer, più un'agenzia di prova. Nomi di hotel e strutture di fantasia.
+ */
+class DemoCatalogSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $this->seedAgency();
+        $insurances = $this->seedInsurances();
+
+        foreach ($this->catalog() as $data) {
+            $destination = Destination::create($data['destination']);
+
+            $hotels = collect($data['hotels'])
+                ->mapWithKeys(fn (array $hotel) => [$hotel['name'] => $destination->hotels()->create($hotel)]);
+
+            $addOns = collect($data['add_on_excursions'])
+                ->map(fn (array $excursion) => $destination->excursions()->create($excursion));
+
+            foreach ($data['packages'] as $packageData) {
+                $periods = $packageData['periods'];
+                $hotelName = $packageData['hotel'] ?? null;
+                unset($packageData['periods'], $packageData['hotel']);
+
+                /** @var Package $package */
+                $package = $destination->packages()->create([
+                    ...$packageData,
+                    'hotel_id' => $hotelName ? $hotels[$hotelName]->id : null,
+                    'valid_from' => $periods[0]['start_date'],
+                    'valid_to' => end($periods)['end_date'],
+                    'cancellation_policy' => "Penali per persona in caso di annullamento:\n- fino a 30 giorni prima della partenza: 10%\n- da 29 a 15 giorni: 30%\n- da 14 a 7 giorni: 50%\n- da 6 giorni alla partenza: 100%",
+                ]);
+
+                $package->periods()->createMany($periods);
+                $package->insurances()->sync($insurances);
+
+                if ($package->type === PackageType::Stay) {
+                    $package->excursions()->sync($addOns->pluck('id'));
+                }
+            }
+        }
+    }
+
+    private function seedAgency(): void
+    {
+        $user = User::firstOrCreate(['email' => 'agenzia@tourflow.test'], [
+            'name' => 'Mario Rossi',
+            'phone' => '+39 333 1111111',
+            'password' => 'password',
+            'role' => UserRole::Agency,
+        ]);
+
+        $user->agency()->firstOrCreate([], [
+            'company_name' => 'Viaggi Sole Srl',
+            'vat_number' => '09876543210',
+            'tax_code' => '09876543210',
+            'address' => 'Corso Italia 25',
+            'city' => 'Milano',
+            'zip_code' => '20122',
+            'province' => 'MI',
+            'phone' => '+39 02 9876543',
+            'email' => 'info@viaggisole.test',
+            'pec' => 'viaggisole@pec.test',
+            'sdi_code' => 'M5UXCR1',
+            'contact_person' => 'Mario Rossi',
+            'license_number' => 'AUT-MI-2019-123',
+        ]);
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function seedInsurances(): array
+    {
+        return collect([
+            ['name' => 'Medico-bagaglio Base', 'type' => InsuranceType::MedicalLuggage, 'description' => 'Spese mediche fino a € 30.000 e bagaglio fino a € 1.000.', 'price_gross' => 35, 'price_net' => 28],
+            ['name' => 'Medico-bagaglio Plus', 'type' => InsuranceType::MedicalLuggage, 'description' => 'Spese mediche illimitate e bagaglio fino a € 2.000.', 'price_gross' => 59, 'price_net' => 47],
+            ['name' => 'Annullamento viaggio', 'type' => InsuranceType::Cancellation, 'description' => 'Rimborso delle penali in caso di annullamento per motivi documentabili.', 'price_gross' => 49, 'price_net' => 39],
+        ])->map(fn (array $insurance) => Insurance::create($insurance)->id)->all();
+    }
+
+    /**
+     * Listino su cinque stagioni a partire dall'autunno dell'anno corrente.
+     * Il prezzo base è quello di bassa stagione; il netto agenzia è circa -15%.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function seasons(float $base, bool $perPerson = true): array
+    {
+        $y = now()->year;
+        $seasons = [
+            ['Autunno', "{$y}-10-01", "{$y}-12-19", 1.0],
+            ['Natale e Capodanno', "{$y}-12-20", ($y + 1).'-01-06', 1.4],
+            ['Inverno', ($y + 1).'-01-07', ($y + 1).'-03-31', 1.05],
+            ['Primavera', ($y + 1).'-04-01', ($y + 1).'-06-30', 1.15],
+            ['Estate', ($y + 1).'-07-01', ($y + 1).'-09-30', 1.25],
+        ];
+
+        $round = fn (float $value) => round($value / 5) * 5;
+        $pair = fn (string $field, ?float $gross) => $gross === null
+            ? [$field.'_gross' => null, $field.'_net' => null]
+            : [$field.'_gross' => $round($gross), $field.'_net' => $round($gross * 0.85)];
+
+        return array_map(function (array $season) use ($base, $perPerson, $pair) {
+            [$name, $start, $end, $factor] = $season;
+            $adult = $base * $factor;
+
+            return [
+                'name' => $name,
+                'start_date' => $start,
+                'end_date' => $end,
+                ...$pair('adult_price', $adult),
+                ...$pair('extra_bed_adult_price', $perPerson ? $adult * 0.85 : null),
+                ...$pair('child_price', $perPerson ? $adult * 0.5 : null),
+                ...$pair('infant_price', null),
+                ...$pair('single_supplement', $perPerson ? $adult * 0.3 : null),
+            ];
+        }, $seasons);
+    }
+
+    private function image(string $seed): string
+    {
+        return "https://picsum.photos/seed/{$seed}/1200/800";
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function catalog(): array
+    {
+        $stayExcluded = ["Volo A/R dall'Italia", 'Transfer aeroportuale se non richiesto', 'Escursioni facoltative', 'Visto e assicurazione'];
+
+        return [
+            [
+                'destination' => [
+                    'name' => 'Hurghada',
+                    'country' => 'Egitto',
+                    'description' => 'Mar Rosso, resort sul mare e partenza ideale per Luxor e il deserto.',
+                    'cover_image' => $this->image('hurghada'),
+                    'sort_order' => 1,
+                ],
+                'hotels' => [[
+                    'name' => 'Red Sea Paradise Resort',
+                    'stars' => 5,
+                    'address' => 'Sahl Hasheesh, Hurghada',
+                    'description' => 'Resort sul mare con spiaggia privata, piscine e spa.',
+                    'amenities' => ['Spiaggia privata', 'Piscine', 'Spa', 'Wi-Fi', 'Animazione'],
+                    'images' => [$this->image('redsea1'), $this->image('redsea2')],
+                ]],
+                'add_on_excursions' => [
+                    ['name' => 'Safari in quad al tramonto', 'description' => 'Quad nel deserto con sosta in un villaggio beduino.', 'duration' => '4 ore', 'adult_price_gross' => 35, 'adult_price_net' => 28, 'child_price_gross' => 20, 'child_price_net' => 16],
+                    ['name' => 'Snorkeling a Giftun Island', 'description' => 'Uscita in barca con soste per lo snorkeling.', 'duration' => 'Intera giornata', 'adult_price_gross' => 40, 'adult_price_net' => 32, 'child_price_gross' => 22, 'child_price_net' => 18],
+                ],
+                'packages' => [
+                    [
+                        'type' => PackageType::Stay,
+                        'price_unit' => PriceUnit::PerPerson,
+                        'hotel' => 'Red Sea Paradise Resort',
+                        'title' => 'Hurghada All Inclusive',
+                        'slug' => 'hurghada-all-inclusive',
+                        'location' => 'Hurghada · Mar Rosso',
+                        'badge' => 'Più richiesto',
+                        'cover_image' => $this->image('hurghada-ai'),
+                        'gallery' => [$this->image('hurghada-g1'), $this->image('hurghada-g2'), $this->image('hurghada-g3')],
+                        'nights' => 7,
+                        'board' => 'All Inclusive',
+                        'accommodation' => 'Resort 5 stelle',
+                        'period_label' => "Tutto l'anno",
+                        'departures' => ['Aeroporto di Hurghada'],
+                        'short_description' => 'Sette notti in resort sul Mar Rosso, con formula All Inclusive e assistenza dedicata.',
+                        'description' => "Una settimana a Hurghada pensata per chi vuole mare, comfort e zero pensieri una volta arrivato in Egitto.\n\nSelezioniamo il resort più adatto alle tue esigenze e possiamo aggiungere transfer privato ed escursioni su misura.",
+                        'highlights' => ['Resort sul mare', 'All Inclusive', 'Assistenza locale', 'Formula flessibile'],
+                        'included' => ['7 pernottamenti', 'Trattamento All Inclusive', 'Assistenza in loco', 'Selezione personalizzata del resort'],
+                        'excluded' => $stayExcluded,
+                        'itinerary' => [
+                            ['day' => 'Giorno 1', 'title' => 'Benvenuti a Hurghada', 'description' => 'Arrivo autonomo, eventuale transfer riservato e sistemazione nel resort.'],
+                            ['day' => 'Giorni 2–3', 'title' => 'Mar Rosso e relax', 'description' => 'Tempo libero tra spiaggia, piscina e servizi All Inclusive del resort.'],
+                            ['day' => 'Giorni 4–6', 'title' => "L'Egitto che scegli tu", 'description' => 'Possibilità di aggiungere Orange Bay, safari nel deserto o una giornata a Luxor.'],
+                            ['day' => 'Giorni 7–8', 'title' => 'Ultimi momenti sul mare', 'description' => "Relax, check-out ed eventuale transfer privato verso l'aeroporto."],
+                        ],
+                        'transfer_included' => false,
+                        'transfer_price_gross' => 15,
+                        'transfer_price_net' => 12,
+                        'is_featured' => true,
+                        'sort_order' => 1,
+                        'periods' => $this->seasons(490),
+                    ],
+                    [
+                        'type' => PackageType::Excursion,
+                        'price_unit' => PriceUnit::PerPerson,
+                        'title' => 'Orange Bay in barca',
+                        'slug' => 'orange-bay-in-barca',
+                        'location' => 'Giftun Island · Hurghada',
+                        'badge' => 'Imperdibile',
+                        'cover_image' => $this->image('orangebay'),
+                        'nights' => 0,
+                        'board' => 'Pranzo incluso',
+                        'accommodation' => 'Barca con ponte panoramico',
+                        'period_label' => "Tutto l'anno",
+                        'departures' => ['Porto di Hurghada', 'Hotel Hurghada'],
+                        'short_description' => "Una giornata nell'isola dalle acque turchesi, con snorkeling e pranzo a bordo.",
+                        'description' => "Partenza in barca verso Orange Bay, una delle spiagge più belle del Mar Rosso.\n\nDue soste snorkeling sulla barriera corallina, pranzo a bordo e tempo libero in spiaggia.",
+                        'highlights' => ['Acque cristalline', 'Due soste snorkeling', 'Pranzo a bordo', 'Pick-up in hotel'],
+                        'included' => ['Pick-up e rientro in hotel', 'Pranzo a bordo e bevande analcoliche', 'Attrezzatura snorkeling', 'Assistente in italiano'],
+                        'excluded' => ['Tassa di ingresso al parco marino', 'Mance', 'Foto e video'],
+                        'itinerary' => [
+                            ['day' => 'Mattina', 'title' => 'Partenza dal porto', 'description' => 'Pick-up in hotel e imbarco verso Giftun Island.'],
+                            ['day' => 'Mezzogiorno', 'title' => 'Snorkeling e pranzo', 'description' => 'Soste sulla barriera corallina e pranzo a bordo.'],
+                            ['day' => 'Pomeriggio', 'title' => 'Relax a Orange Bay', 'description' => 'Tempo libero in spiaggia e rientro in hotel.'],
+                        ],
+                        'sort_order' => 2,
+                        'periods' => $this->seasons(45),
+                    ],
+                    [
+                        'type' => PackageType::Excursion,
+                        'price_unit' => PriceUnit::PerPerson,
+                        'title' => 'Luxor in giornata',
+                        'slug' => 'luxor-in-giornata',
+                        'location' => 'Luxor · Valle del Nilo',
+                        'badge' => 'Premium',
+                        'cover_image' => $this->image('luxor'),
+                        'nights' => 0,
+                        'board' => 'Pranzo incluso',
+                        'accommodation' => 'Bus GT con guida egittologa italiana',
+                        'period_label' => "Tutto l'anno",
+                        'departures' => ['Hotel Hurghada'],
+                        'short_description' => 'Templi di Karnak e Luxor e Valle dei Re in una giornata con guida in italiano.',
+                        'description' => "Un viaggio nella storia dell'antico Egitto: la Valle dei Re, il Tempio di Karnak e il Tempio di Luxor.\n\nGuida egittologa in italiano e pranzo in ristorante sul Nilo.",
+                        'highlights' => ['Valle dei Re', 'Tempio di Karnak', 'Guida in italiano', 'Pranzo sul Nilo'],
+                        'included' => ['Trasporto in bus GT', 'Guida egittologa in italiano', 'Ingressi ai siti', 'Pranzo in ristorante'],
+                        'excluded' => ['Bevande', 'Mance', 'Ingresso alle tombe speciali'],
+                        'itinerary' => [
+                            ['day' => 'Alba', 'title' => 'Partenza per Luxor', 'description' => 'Pick-up in hotel e trasferimento verso Luxor.'],
+                            ['day' => 'Mattina', 'title' => 'Valle dei Re', 'description' => 'Visita alle tombe dei faraoni e al Tempio di Hatshepsut.'],
+                            ['day' => 'Pomeriggio', 'title' => 'Karnak e Luxor', 'description' => 'Pranzo sul Nilo e visita ai templi.'],
+                        ],
+                        'sort_order' => 3,
+                        'periods' => $this->seasons(95),
+                    ],
+                    [
+                        'type' => PackageType::Transfer,
+                        'price_unit' => PriceUnit::PerService,
+                        'title' => 'Transfer privato aeroporto di Hurghada',
+                        'slug' => 'transfer-privato-aeroporto-hurghada',
+                        'location' => 'Hurghada',
+                        'cover_image' => $this->image('transfer-hrg'),
+                        'nights' => 0,
+                        'board' => 'Servizio privato',
+                        'accommodation' => 'Auto privata con autista',
+                        'period_label' => "Tutto l'anno",
+                        'departures' => ['Aeroporto di Hurghada', 'Hotel Hurghada'],
+                        'short_description' => "Trasferimento privato tra l'aeroporto e il tuo hotel, senza attese.",
+                        'description' => "L'autista ti aspetta in aeroporto con un cartello nominativo e ti accompagna direttamente in hotel.\n\nPrezzo per tratta, valido fino a 4 persone con bagagli.",
+                        'highlights' => ['Nessuna attesa', 'Auto privata', 'Fino a 4 persone', 'Assistenza 24/7'],
+                        'included' => ['Auto privata con aria condizionata', 'Autista dedicato', 'Accoglienza in aeroporto'],
+                        'excluded' => ['Mance', 'Attese oltre 60 minuti dal volo'],
+                        'itinerary' => [],
+                        'sort_order' => 4,
+                        'periods' => $this->seasons(30, perPerson: false),
+                    ],
+                ],
+            ],
+            [
+                'destination' => [
+                    'name' => 'Sharm el Sheikh',
+                    'country' => 'Egitto',
+                    'description' => 'Barriera corallina, Ras Mohammed e mare tutto l\'anno.',
+                    'cover_image' => $this->image('sharm'),
+                    'sort_order' => 2,
+                ],
+                'hotels' => [[
+                    'name' => 'Coral Garden Resort & Spa',
+                    'stars' => 5,
+                    'address' => 'Nabq Bay, Sharm el Sheikh',
+                    'description' => 'Resort con accesso diretto alla barriera corallina e spa.',
+                    'amenities' => ['Barriera corallina', 'Piscina riscaldata', 'Spa', 'Wi-Fi'],
+                    'images' => [$this->image('coral1'), $this->image('coral2')],
+                ]],
+                'add_on_excursions' => [
+                    ['name' => 'Ras Mohammed in barca', 'description' => 'Snorkeling nel parco marino di Ras Mohammed, pranzo a bordo.', 'duration' => 'Intera giornata', 'adult_price_gross' => 60, 'adult_price_net' => 48, 'child_price_gross' => 35, 'child_price_net' => 28],
+                ],
+                'packages' => [
+                    [
+                        'type' => PackageType::Stay,
+                        'price_unit' => PriceUnit::PerPerson,
+                        'hotel' => 'Coral Garden Resort & Spa',
+                        'title' => 'Sharm el Sheikh Resort & Spa',
+                        'slug' => 'sharm-el-sheikh-resort-spa',
+                        'location' => 'Nabq Bay · Sharm el Sheikh',
+                        'badge' => 'Premium',
+                        'cover_image' => $this->image('sharm-spa'),
+                        'gallery' => [$this->image('sharm-g1'), $this->image('sharm-g2')],
+                        'nights' => 7,
+                        'board' => 'All Inclusive',
+                        'accommodation' => 'Resort 5 stelle con spa',
+                        'departures' => ['Aeroporto di Sharm el Sheikh'],
+                        'short_description' => 'Una settimana sulla barriera corallina, con spa e formula All Inclusive.',
+                        'description' => "Sette notti in un resort affacciato sulla barriera corallina di Nabq Bay.\n\nIdeale per chi ama lo snorkeling direttamente dalla spiaggia e qualche ora di relax in spa.",
+                        'highlights' => ['Barriera dalla spiaggia', 'Spa inclusa', 'All Inclusive', 'Assistenza locale'],
+                        'included' => ['7 pernottamenti', 'Trattamento All Inclusive', 'Un ingresso alla spa', 'Assistenza in loco'],
+                        'excluded' => $stayExcluded,
+                        'itinerary' => [
+                            ['day' => 'Giorno 1', 'title' => 'Arrivo a Sharm', 'description' => 'Arrivo autonomo e sistemazione nel resort.'],
+                            ['day' => 'Giorni 2–7', 'title' => 'Mare e barriera', 'description' => 'Snorkeling dalla spiaggia, spa e possibilità di escursioni a Ras Mohammed.'],
+                            ['day' => 'Giorno 8', 'title' => 'Partenza', 'description' => "Check-out ed eventuale transfer verso l'aeroporto."],
+                        ],
+                        'transfer_included' => true,
+                        'is_featured' => true,
+                        'sort_order' => 5,
+                        'periods' => $this->seasons(590),
+                    ],
+                ],
+            ],
+            [
+                'destination' => [
+                    'name' => 'Marsa Alam',
+                    'country' => 'Egitto',
+                    'description' => 'Fondali incontaminati, delfini e tartarughe marine.',
+                    'cover_image' => $this->image('marsaalam'),
+                    'sort_order' => 3,
+                ],
+                'hotels' => [[
+                    'name' => 'Dolphin Bay Resort',
+                    'stars' => 4,
+                    'address' => 'Port Ghalib, Marsa Alam',
+                    'description' => 'Resort con pontile sulla barriera, ideale per famiglie.',
+                    'amenities' => ['Pontile sulla barriera', 'Miniclub', 'Piscina', 'Wi-Fi'],
+                    'images' => [$this->image('dolphin1')],
+                ]],
+                'add_on_excursions' => [
+                    ['name' => 'Snorkeling con i delfini a Samadai', 'description' => 'Uscita in barca alla laguna dei delfini.', 'duration' => 'Intera giornata', 'adult_price_gross' => 70, 'adult_price_net' => 56, 'child_price_gross' => 40, 'child_price_net' => 32],
+                ],
+                'packages' => [
+                    [
+                        'type' => PackageType::Stay,
+                        'price_unit' => PriceUnit::PerPerson,
+                        'hotel' => 'Dolphin Bay Resort',
+                        'title' => 'Marsa Alam Family',
+                        'slug' => 'marsa-alam-family',
+                        'location' => 'Port Ghalib · Marsa Alam',
+                        'cover_image' => $this->image('marsa-family'),
+                        'gallery' => [$this->image('marsa-g1'), $this->image('marsa-g2')],
+                        'nights' => 7,
+                        'board' => 'Mezza pensione',
+                        'accommodation' => 'Resort 4 stelle con miniclub',
+                        'departures' => ['Aeroporto di Marsa Alam'],
+                        'short_description' => 'Vacanza per famiglie sul mare più incontaminato del Mar Rosso.',
+                        'description' => "Un resort pensato per le famiglie, con miniclub e pontile direttamente sulla barriera.\n\nI bambini fino a 13 anni hanno una quota dedicata.",
+                        'highlights' => ['Ideale per famiglie', 'Miniclub', 'Pontile sulla barriera', 'Quota bambini ridotta'],
+                        'included' => ['7 pernottamenti', 'Mezza pensione', 'Miniclub', 'Assistenza in loco'],
+                        'excluded' => $stayExcluded,
+                        'itinerary' => [],
+                        'child_max_age' => 13,
+                        'transfer_included' => true,
+                        'sort_order' => 6,
+                        'periods' => $this->seasons(520),
+                    ],
+                    [
+                        'type' => PackageType::Transfer,
+                        'price_unit' => PriceUnit::PerService,
+                        'title' => 'Transfer privato aeroporto di Marsa Alam',
+                        'slug' => 'transfer-privato-aeroporto-marsa-alam',
+                        'location' => 'Marsa Alam',
+                        'cover_image' => $this->image('transfer-rmf'),
+                        'nights' => 0,
+                        'board' => 'Servizio privato',
+                        'accommodation' => 'Minivan privato con autista',
+                        'period_label' => "Tutto l'anno",
+                        'departures' => ['Aeroporto di Marsa Alam'],
+                        'short_description' => "Trasferimento privato tra l'aeroporto di Marsa Alam e il tuo hotel.",
+                        'description' => 'Prezzo per tratta, valido fino a 7 persone con bagagli.',
+                        'highlights' => ['Nessuna attesa', 'Minivan privato', 'Fino a 7 persone'],
+                        'included' => ['Minivan con aria condizionata', 'Autista dedicato', 'Accoglienza in aeroporto'],
+                        'excluded' => ['Mance'],
+                        'itinerary' => [],
+                        'sort_order' => 7,
+                        'periods' => $this->seasons(45, perPerson: false),
+                    ],
+                ],
+            ],
+        ];
+    }
+}
