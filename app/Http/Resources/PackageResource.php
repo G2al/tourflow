@@ -3,12 +3,13 @@
 namespace App\Http\Resources;
 
 use App\Models\Package;
+use App\Support\AgePolicy;
 use App\Support\Media;
 use Illuminate\Http\Request;
 
 /**
- * Dettaglio del pacchetto: tutti i campi della card più galleria, hotel,
- * listino, extra e condizioni.
+ * Dettaglio del pacchetto: tutti i campi della card più galleria, hotel con
+ * tipologie di camera, voli disponibili, listino e condizioni.
  *
  * @mixin Package
  */
@@ -20,21 +21,16 @@ class PackageResource extends PackageCardResource
             ...parent::toArray($request),
             'gallery' => Media::urls($this->gallery),
             'hotel' => $this->hotel ? new HotelResource($this->hotel) : null,
+            'flights' => $this->flight_hotel_enabled ? FlightResource::collection($this->flights) : [],
             'transfer' => [
                 'included' => $this->transfer_included,
-                ...$this->price($request, 'price', $this->transfer_included ? null : $this->transfer_price_gross, $this->transfer_included ? null : $this->transfer_price_net),
+                'price' => $this->transfer_included || $this->transfer_price === null ? null : (float) $this->transfer_price,
             ],
-            ...$this->price($request, 'registrationFee', $this->registration_fee_gross, $this->registration_fee_net),
-            'ageRanges' => [
-                'infant' => ['min' => 0, 'max' => $this->infant_max_age],
-                'child' => ['min' => $this->infant_max_age + 1, 'max' => $this->child_max_age],
-                'adult' => ['min' => $this->child_max_age + 1, 'max' => null],
-            ],
+            'registrationFee' => (float) $this->registration_fee,
+            'ageRanges' => AgePolicy::ranges(),
             'cancellationPolicy' => $this->cancellation_policy,
             'notes' => $this->notes,
             'periods' => PackagePeriodResource::collection($this->upcomingPeriods()),
-            'excursions' => ExcursionResource::collection($this->excursions->where('is_active', true)->values()),
-            'insurances' => InsuranceResource::collection($this->insurances->where('is_active', true)->values()),
         ];
     }
 }

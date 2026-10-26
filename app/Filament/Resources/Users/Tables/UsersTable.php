@@ -36,8 +36,13 @@ class UsersTable
                     ->label('Città')
                     ->placeholder('-')
                     ->toggleable(),
+                TextColumn::make('agency_fee')
+                    ->label('Fee')
+                    ->state(fn ($record) => $record->agency ? rtrim(rtrim(number_format($record->agency->feePercent(), 2, ',', ''), '0'), ',').'%' : null)
+                    ->description(fn ($record) => $record->agency && $record->agency->fee_percent === null ? 'predefinita' : null)
+                    ->placeholder('-'),
                 TextColumn::make('bookings_count')
-                    ->label('Prenotazioni')
+                    ->label('Pratiche')
                     ->counts('bookings')
                     ->badge(),
                 ToggleColumn::make('is_active')

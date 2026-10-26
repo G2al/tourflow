@@ -4,24 +4,23 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 
-class BookingExtra extends Model
+class BookingInsurance extends Model
 {
     protected $fillable = [
         'booking_id',
-        'type',
-        'extraable_type',
-        'extraable_id',
+        'insurance_id',
         'name',
+        'unit_price',
         'quantity',
-        'total_price',
+        'total',
     ];
 
     protected function casts(): array
     {
         return [
-            'total_price' => 'decimal:2',
+            'unit_price' => 'decimal:2',
+            'total' => 'decimal:2',
         ];
     }
 
@@ -30,8 +29,8 @@ class BookingExtra extends Model
         return $this->belongsTo(Booking::class);
     }
 
-    public function extraable(): MorphTo
+    public function insurance(): BelongsTo
     {
-        return $this->morphTo();
+        return $this->belongsTo(Insurance::class);
     }
 }

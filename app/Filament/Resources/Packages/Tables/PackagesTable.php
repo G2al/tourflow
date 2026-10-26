@@ -57,8 +57,8 @@ class PackagesTable
                     ->color(fn (Package $record) => $record->valid_to->isPast() ? 'danger' : null)
                     ->sortable(),
                 TextColumn::make('starting_price')
-                    ->label('Da (lordo)')
-                    ->state(fn (Package $record) => $record->startingPrice(false))
+                    ->label('A partire da')
+                    ->state(fn (Package $record) => $record->startingPrice())
                     ->money('EUR')
                     ->description(fn (Package $record) => $record->price_unit->getLabel())
                     ->placeholder('Nessun periodo'),
@@ -104,8 +104,6 @@ class PackagesTable
                             foreach ($record->periods as $period) {
                                 $replica->periods()->create($period->replicate(['package_id'])->toArray());
                             }
-                            $replica->excursions()->sync($record->excursions()->pluck('excursions.id'));
-                            $replica->insurances()->sync($record->insurances()->pluck('insurances.id'));
                         })
                         ->successNotificationTitle('Pacchetto duplicato (non pubblicato)'),
                     DeleteAction::make(),

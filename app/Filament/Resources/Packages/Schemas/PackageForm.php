@@ -6,7 +6,6 @@ use App\Enums\BoardType;
 use App\Enums\PackageType;
 use App\Enums\PriceUnit;
 use App\Filament\Support\PriceFields;
-use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Repeater;
@@ -86,8 +85,8 @@ class PackageForm
                     ->live()
                     ->afterStateUpdated(fn (Set $set) => $set('hotel_id', null)),
                 TextInput::make('location')
-                    ->label('LocalitÃ ')
-                    ->placeholder('Es. Hurghada Â· Mar Rosso')
+                    ->label('Località')
+                    ->placeholder('Es. Hurghada · Mar Rosso')
                     ->helperText('Mostrata sotto il titolo. Se vuota si usa la destinazione.')
                     ->maxLength(255),
                 Select::make('hotel_id')
@@ -99,20 +98,14 @@ class PackageForm
                     )
                     ->searchable()
                     ->preload()
+                    ->required(fn (Get $get) => self::type($get) === PackageType::Stay)
                     ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
                     ->disabled(fn (Get $get) => blank($get('destination_id')))
-                    ->helperText('Facoltativo. Prima seleziona la destinazione.'),
+                    ->helperText('Tipologie di camera e disponibilità si gestiscono nella scheda dell\'hotel.'),
                 TextInput::make('accommodation')
                     ->label('Sistemazione / servizio')
                     ->placeholder('Es. Resort 5 stelle, Auto privata con autista')
                     ->maxLength(255),
-                TextInput::make('nights')
-                    ->label('Notti')
-                    ->numeric()
-                    ->minValue(0)
-                    ->default(7)
-                    ->required()
-                    ->helperText('0 per escursioni e transfer in giornata. I giorni sono calcolati: notti + 1.'),
                 TextInput::make('board')
                     ->label('Trattamento / formula')
                     ->datalist(BoardType::suggestions())
@@ -120,7 +113,7 @@ class PackageForm
                     ->maxLength(255),
                 TextInput::make('badge')
                     ->label('Badge sulla foto')
-                    ->placeholder('Es. PiÃ¹ richiesto, Premium')
+                    ->placeholder('Es. Più richiesto, Premium')
                     ->maxLength(50),
                 TextInput::make('slug')
                     ->label('Slug (URL)')
@@ -131,7 +124,34 @@ class PackageForm
                     ->label("Punti d'incontro / partenza")
                     ->placeholder('Es. Aeroporto di Hurghada (premi Invio per aggiungere)')
                     ->columnSpanFull(),
-                Section::make('ValiditÃ ')
+                Section::make('Vendita del soggiorno')
+                    ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
+                    ->columns(2)
+                    ->columnSpanFull()
+                    ->schema([
+                        Toggle::make('hotel_only_enabled')
+                            ->label('Vendibile come "Solo soggiorno"')
+                            ->helperText('Il cliente sceglie liberamente le date di check-in e check-out.')
+                            ->default(true),
+                        Toggle::make('flight_hotel_enabled')
+                            ->label('Vendibile come "Volo + hotel"')
+                            ->helperText('Usa i voli inseriti per questa destinazione: le notti sono quelle del volo.'),
+                        TextInput::make('nights')
+                            ->label('Notti consigliate')
+                            ->numeric()
+                            ->minValue(1)
+                            ->default(7)
+                            ->required()
+                            ->dehydratedWhenHidden()
+                            ->helperText('Usate per il prezzo "a partire da" mostrato nel catalogo.'),
+                        TextInput::make('min_nights')
+                            ->label('Soggiorno minimo (notti)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->default(1)
+                            ->required(),
+                    ]),
+                Section::make('Validità')
                     ->columns(3)
                     ->columnSpanFull()
                     ->schema([
@@ -192,7 +212,7 @@ class PackageForm
                     ->schema([
                         TextInput::make('day')
                             ->label('Giorno')
-                            ->placeholder('Es. Giorno 1, Giorni 2â€“3')
+                            ->placeholder('Es. Giorno 1, Giorni 2–3')
                             ->required(),
                         TextInput::make('title')
                             ->label('Titolo')
@@ -204,7 +224,7 @@ class PackageForm
                     ])
                     ->columns(2)
                     ->collapsible()
-                    ->itemLabel(fn (array $state) => trim(($state['day'] ?? '').' Â· '.($state['title'] ?? ''), ' Â·'))
+                    ->itemLabel(fn (array $state) => trim(($state['day'] ?? '').' · '.($state['title'] ?? ''), ' ·'))
                     ->addActionLabel('Aggiungi tappa')
                     ->defaultItems(0),
                 Grid::make(2)
@@ -252,7 +272,9 @@ class PackageForm
             ->schema([
                 Repeater::make('periods')
                     ->label('Listino per periodi')
-                    ->helperText('Il prezzo "a partire da" mostrato nel catalogo Ã¨ il piÃ¹ basso tra i periodi futuri.')
+                    ->helperText(fn (Get $get) => self::type($get) === PackageType::Stay
+                        ? 'Soggiorni: prezzi A PERSONA A NOTTE. Ogni notte del soggiorno deve essere coperta da un periodo.'
+                        : 'Prezzi a persona (escursioni) o a servizio (transfer) per la data del servizio.')
                     ->relationship()
                     ->reorderable(false)
                     ->collapsible()
@@ -275,28 +297,33 @@ class PackageForm
                             ->displayFormat('d/m/Y')
                             ->afterOrEqual('start_date')
                             ->required(),
-                        PriceFields::pair('adult_price', 'Quota base', required: true)
-                            ->label(fn (Get $get) => self::isPerService($get, '../../')
-                                ? 'Prezzo del servizio (per tutto il gruppo)'
-                                : 'Quota base adulto (in doppia)')
-                            ->columnSpanFull(),
-                        Grid::make(1)
-                            ->visible(fn (Get $get) => ! self::isPerService($get, '../../'))
-                            ->columnSpanFull()
-                            ->schema([
-                                PriceFields::pair('extra_bed_adult_price', '3Â°/4Â° letto adulto', helperText: 'Se vuoto si applica la quota base.'),
-                                PriceFields::pair('child_price', 'Bambino', helperText: 'Se vuoto si applica la quota base.'),
-                                PriceFields::pair('infant_price', 'Infant', helperText: "Se vuoto l'infant Ã¨ gratuito."),
-                                PriceFields::pair('single', 'Supplemento singola', grossSuffix: '_supplement_gross', netSuffix: '_supplement_net'),
-                            ]),
+                        PriceFields::money('adult_price', 'Quota base', required: true)
+                            ->label(fn (Get $get) => match (true) {
+                                self::isPerService($get, '../../') => 'Prezzo del servizio (per tutto il gruppo)',
+                                self::type($get, '../../') === PackageType::Stay => 'Adulto in doppia, a notte',
+                                default => 'Adulto',
+                            }),
+                        PriceFields::money('extra_bed_adult_price', '3°/4° letto adulto, a notte')
+                            ->helperText('Se vuoto si applica la quota base.')
+                            ->visible(fn (Get $get) => self::type($get, '../../') === PackageType::Stay),
+                        PriceFields::money('child_price', 'Bambino')
+                            ->label(fn (Get $get) => self::type($get, '../../') === PackageType::Stay ? 'Bambino, a notte' : 'Bambino')
+                            ->helperText('Se vuoto si applica la quota base.')
+                            ->visible(fn (Get $get) => ! self::isPerService($get, '../../')),
+                        PriceFields::money('infant_price', 'Infant')
+                            ->label(fn (Get $get) => self::type($get, '../../') === PackageType::Stay ? 'Infant, a notte' : 'Infant')
+                            ->helperText("Se vuoto l'infant è gratuito.")
+                            ->visible(fn (Get $get) => ! self::isPerService($get, '../../')),
+                        PriceFields::money('single_supplement', 'Supplemento singola, a notte')
+                            ->visible(fn (Get $get) => self::type($get, '../../') === PackageType::Stay),
                     ]),
             ]);
     }
 
     private static function feesTab(): Tab
     {
-        return Tab::make('Quote ed extra')
-            ->icon('heroicon-o-shield-check')
+        return Tab::make('Quote accessorie')
+            ->icon('heroicon-o-receipt-percent')
             ->schema([
                 Section::make('Trasferimenti')
                     ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
@@ -305,50 +332,18 @@ class PackageForm
                             ->label('Trasferimenti inclusi nella quota')
                             ->default(true)
                             ->live(),
-                        PriceFields::pair('transfer_price', 'Prezzo trasferimenti per persona', required: true)
+                        PriceFields::money('transfer_price', 'Prezzo trasferimenti per persona', required: true)
                             ->visible(fn (Get $get) => ! $get('transfer_included')),
                     ]),
                 Section::make("Quota d'iscrizione")
-                    ->description('Per ogni partecipante pagante (infant esclusi). Non si applica ai prodotti a servizio.')
+                    ->description('Per ogni passeggero pagante (infant esclusi) dei soggiorni.')
+                    ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
                     ->schema([
-                        PriceFields::pair('registration_fee', "Quota d'iscrizione", required: true, default: 0),
+                        PriceFields::money('registration_fee', "Quota d'iscrizione per persona", required: true)->default(0),
                     ]),
-                Section::make("Fasce d'etÃ ")
-                    ->description('EtÃ  compiuta alla data di partenza.')
-                    ->columns(2)
-                    ->schema([
-                        TextInput::make('infant_max_age')
-                            ->label('Infant fino a (anni)')
-                            ->numeric()
-                            ->minValue(0)
-                            ->default(1)
-                            ->required(),
-                        TextInput::make('child_max_age')
-                            ->label('Bambino fino a (anni)')
-                            ->numeric()
-                            ->gt('infant_max_age')
-                            ->default(11)
-                            ->required(),
-                    ]),
-                Section::make('Extra proposti in fase di prenotazione')
-                    ->schema([
-                        CheckboxList::make('excursions')
-                            ->label('Escursioni facoltative')
-                            ->helperText('Escursioni extra della destinazione selezionata, aggiungibili al soggiorno.')
-                            ->relationship(
-                                'excursions',
-                                'name',
-                                fn (Builder $query, Get $get) => $query->where('destination_id', $get('destination_id')),
-                            )
-                            ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
-                            ->bulkToggleable()
-                            ->columns(2),
-                        CheckboxList::make('insurances')
-                            ->label('Assicurazioni proposte')
-                            ->relationship('insurances', 'name')
-                            ->bulkToggleable()
-                            ->columns(2),
-                    ]),
+                Section::make('Note')
+                    ->description("Fasce d'età, assicurazioni, blocca prezzo, fee agenzie e acconto sono globali: si impostano in Impostazioni e Assicurazioni.")
+                    ->schema([]),
             ]);
     }
 

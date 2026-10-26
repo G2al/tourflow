@@ -20,21 +20,37 @@ class AuthApiTest extends ApiTestCase
                 'city' => 'Torino',
                 'zip_code' => '10100',
                 'province' => 'TO',
+                'phone' => '+39 011 1234567',
+                'email' => 'info@neriviaggi.test',
             ],
         ], $overrides);
     }
 
-    public function test_agency_can_register_and_operate_immediately(): void
+    public function test_agency_can_register_and_operate_immediately_with_default_fee(): void
     {
         $token = $this->postJson('/api/v1/auth/register', $this->registrationPayload())
             ->assertCreated()
             ->assertJsonPath('user.role', 'agency')
             ->assertJsonPath('user.agency.company_name', 'Neri Viaggi')
+            ->assertJsonPath('user.agency.fee_percent', 10)
             ->json('token');
 
         $this->withToken($token)
             ->getJson('/api/v1/packages')
-            ->assertJsonPath('data.0.priceType', 'net');
+            ->assertJsonPath('data.0.agencyFee.percent', 10);
+    }
+
+    public function test_agency_email_phone_and_province_are_required(): void
+    {
+        $payload = $this->registrationPayload();
+        unset($payload['agency']['email'], $payload['agency']['phone'], $payload['agency']['province']);
+
+        $errors = $this->postJson('/api/v1/auth/register', $payload)->assertUnprocessable()->json('errors');
+
+        $this->assertArrayHasKey('agency.email', $errors);
+        $this->assertArrayHasKey('agency.phone', $errors);
+        $this->assertArrayHasKey('agency.province', $errors);
+        $this->assertSame('Il campo email agenzia è obbligatorio.', $errors['agency.email'][0]);
     }
 
     public function test_registration_validates_vat_number_uniqueness(): void

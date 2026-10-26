@@ -28,9 +28,13 @@ class DatabaseSeeder extends Seeder
             'contact_phone' => '+39 06 1234567',
             'address' => 'Via Roma 1, 00100 Roma (RM)',
             'vat_number' => '01234567890',
+            'bank_beneficiary' => 'TourFlow Viaggi Srl',
+            'bank_name' => 'Banca di prova',
+            'bank_iban' => 'IT60X0542811101000000123456',
         ]);
 
         $this->call([
+            LegalPagesSeeder::class,
             DemoAgencySeeder::class,
             DemoCatalogSeeder::class,
         ]);

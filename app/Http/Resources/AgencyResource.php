@@ -27,6 +27,7 @@ class AgencyResource extends JsonResource
             'sdi_code' => $this->sdi_code,
             'contact_person' => $this->contact_person,
             'license_number' => $this->license_number,
+            'fee_percent' => $this->feePercent(),
         ];
     }
 }

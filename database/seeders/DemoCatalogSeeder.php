@@ -6,13 +6,16 @@ use App\Enums\InsuranceType;
 use App\Enums\PackageType;
 use App\Enums\PriceUnit;
 use App\Models\Destination;
+use App\Models\Hotel;
 use App\Models\Insurance;
 use App\Models\Package;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Seeder;
 
 /**
- * Catalogo dimostrativo "solo land" in Egitto: soggiorni, escursioni e
- * transfer. Nomi di hotel e strutture di fantasia. Non crea utenti.
+ * Catalogo dimostrativo in Egitto: soggiorni (solo soggiorno e volo + hotel),
+ * escursioni e transfer, con tipologie di camera, allotment, voli e
+ * assicurazioni. Nomi di hotel e strutture di fantasia. Non crea utenti.
  */
 class DemoCatalogSeeder extends Seeder
 {
@@ -24,7 +27,7 @@ class DemoCatalogSeeder extends Seeder
             return;
         }
 
-        $insurances = $this->seedInsurances();
+        $this->seedInsurances();
 
         foreach ($this->catalog() as $data) {
             $destination = Destination::create($data['destination']);
@@ -32,8 +35,11 @@ class DemoCatalogSeeder extends Seeder
             $hotels = collect($data['hotels'])
                 ->mapWithKeys(fn (array $hotel) => [$hotel['name'] => $destination->hotels()->create($hotel)]);
 
-            $addOns = collect($data['add_on_excursions'])
-                ->map(fn (array $excursion) => $destination->excursions()->create($excursion));
+            $hotels->each(fn (Hotel $hotel) => $this->seedRoomTypes($hotel));
+
+            if ($data['flights']) {
+                $this->seedFlights($destination, $data['flights']['base_price']);
+            }
 
             foreach ($data['packages'] as $packageData) {
                 $periods = $packageData['periods'];
@@ -50,30 +56,74 @@ class DemoCatalogSeeder extends Seeder
                 ]);
 
                 $package->periods()->createMany($periods);
-                $package->insurances()->sync($insurances);
+            }
+        }
+    }
 
-                if ($package->type === PackageType::Stay) {
-                    $package->excursions()->sync($addOns->pluck('id'));
-                }
+    private function seedInsurances(): void
+    {
+        Insurance::create(['name' => 'Medico-bagaglio', 'type' => InsuranceType::MedicalLuggage, 'description' => 'Spese mediche fino a € 30.000 e bagaglio fino a € 1.000.', 'price' => 29]);
+        Insurance::create(['name' => 'All risk medico-bagaglio-annullamento', 'type' => InsuranceType::AllRisk, 'description' => 'Spese mediche illimitate, bagaglio fino a € 2.000 e rimborso delle penali di annullamento.', 'price' => 59]);
+    }
+
+    /**
+     * Tipologie di camera con allotment di un anno (dal 1° ottobre).
+     */
+    private function seedRoomTypes(Hotel $hotel): void
+    {
+        $y = now()->year;
+        $types = [
+            ['name' => 'Standard', 'supplement' => 0, 'rooms' => 10, 'description' => 'Camera doppia con possibilità di 3° e 4° letto.'],
+            ['name' => 'Superior vista mare', 'supplement' => 15, 'rooms' => 6, 'description' => 'Camera con balcone e vista mare.'],
+            ['name' => 'Deluxe vista mare', 'supplement' => 30, 'rooms' => 4, 'description' => 'Camera ampia con terrazza fronte mare.'],
+        ];
+
+        foreach ($types as $order => $type) {
+            $hotel->roomTypes()->create([
+                'name' => $type['name'],
+                'description' => $type['description'],
+                'supplement' => $type['supplement'],
+                'max_occupancy' => 4,
+                'sort_order' => $order,
+            ])->allotments()->create([
+                'start_date' => "{$y}-10-01",
+                'end_date' => ($y + 1).'-09-30',
+                'rooms' => $type['rooms'],
+            ]);
+        }
+    }
+
+    /**
+     * Voli A/R di 7 notti ogni domenica per 8 settimane, da Napoli, Roma, Milano e Bari.
+     */
+    private function seedFlights(Destination $destination, float $basePrice): void
+    {
+        $firstSunday = today()->addWeek()->next(CarbonInterface::SUNDAY);
+        $airportPrice = ['NAP' => 0, 'FCO' => 10, 'MXP' => 20, 'BRI' => -10];
+
+        for ($week = 0; $week < 8; $week++) {
+            $outbound = $firstSunday->copy()->addWeeks($week);
+
+            foreach ($airportPrice as $airport => $delta) {
+                $destination->flights()->create([
+                    'departure_airport' => $airport,
+                    'outbound_date' => $outbound,
+                    'return_date' => $outbound->copy()->addDays(7),
+                    'carrier' => 'Charter Queen Tour',
+                    'outbound_details' => 'Partenza ore 08:30',
+                    'return_details' => 'Partenza ore 15:00',
+                    'seats' => 30,
+                    'adult_price' => $basePrice + $delta,
+                    'child_price' => round(($basePrice + $delta) * 0.75),
+                    'infant_price' => 50,
+                ]);
             }
         }
     }
 
     /**
-     * @return array<int, int>
-     */
-    private function seedInsurances(): array
-    {
-        return collect([
-            ['name' => 'Medico-bagaglio Base', 'type' => InsuranceType::MedicalLuggage, 'description' => 'Spese mediche fino a € 30.000 e bagaglio fino a € 1.000.', 'price_gross' => 35, 'price_net' => 28],
-            ['name' => 'Medico-bagaglio Plus', 'type' => InsuranceType::MedicalLuggage, 'description' => 'Spese mediche illimitate e bagaglio fino a € 2.000.', 'price_gross' => 59, 'price_net' => 47],
-            ['name' => 'Annullamento viaggio', 'type' => InsuranceType::Cancellation, 'description' => 'Rimborso delle penali in caso di annullamento per motivi documentabili.', 'price_gross' => 49, 'price_net' => 39],
-        ])->map(fn (array $insurance) => Insurance::create($insurance)->id)->all();
-    }
-
-    /**
      * Listino su cinque stagioni a partire dall'autunno dell'anno corrente.
-     * Il prezzo base è quello di bassa stagione; il netto agenzia è circa -15%.
+     * Il prezzo base è quello di bassa stagione (a notte per i soggiorni).
      *
      * @return array<int, array<string, mixed>>
      */
@@ -88,24 +138,19 @@ class DemoCatalogSeeder extends Seeder
             ['Estate', ($y + 1).'-07-01', ($y + 1).'-09-30', 1.25],
         ];
 
-        $round = fn (float $value) => round($value / 5) * 5;
-        $pair = fn (string $field, ?float $gross) => $gross === null
-            ? [$field.'_gross' => null, $field.'_net' => null]
-            : [$field.'_gross' => $round($gross), $field.'_net' => $round($gross * 0.85)];
-
-        return array_map(function (array $season) use ($base, $perPerson, $pair) {
+        return array_map(function (array $season) use ($base, $perPerson) {
             [$name, $start, $end, $factor] = $season;
-            $adult = $base * $factor;
+            $adult = round($base * $factor);
 
             return [
                 'name' => $name,
                 'start_date' => $start,
                 'end_date' => $end,
-                ...$pair('adult_price', $adult),
-                ...$pair('extra_bed_adult_price', $perPerson ? $adult * 0.85 : null),
-                ...$pair('child_price', $perPerson ? $adult * 0.5 : null),
-                ...$pair('infant_price', null),
-                ...$pair('single_supplement', $perPerson ? $adult * 0.3 : null),
+                'adult_price' => $adult,
+                'extra_bed_adult_price' => $perPerson ? round($adult * 0.8) : null,
+                'child_price' => $perPerson ? round($adult * 0.5) : null,
+                'infant_price' => null,
+                'single_supplement' => $perPerson ? round($adult * 0.3) : null,
             ];
         }, $seasons);
     }
@@ -139,10 +184,7 @@ class DemoCatalogSeeder extends Seeder
                     'amenities' => ['Spiaggia privata', 'Piscine', 'Spa', 'Wi-Fi', 'Animazione'],
                     'images' => [$this->image('redsea1'), $this->image('redsea2')],
                 ]],
-                'add_on_excursions' => [
-                    ['name' => 'Safari in quad al tramonto', 'description' => 'Quad nel deserto con sosta in un villaggio beduino.', 'duration' => '4 ore', 'adult_price_gross' => 35, 'adult_price_net' => 28, 'child_price_gross' => 20, 'child_price_net' => 16],
-                    ['name' => 'Snorkeling a Giftun Island', 'description' => 'Uscita in barca con soste per lo snorkeling.', 'duration' => 'Intera giornata', 'adult_price_gross' => 40, 'adult_price_net' => 32, 'child_price_gross' => 22, 'child_price_net' => 18],
-                ],
+                'flights' => ['base_price' => 290],
                 'packages' => [
                     [
                         'type' => PackageType::Stay,
@@ -171,11 +213,12 @@ class DemoCatalogSeeder extends Seeder
                             ['day' => 'Giorni 7–8', 'title' => 'Ultimi momenti sul mare', 'description' => "Relax, check-out ed eventuale transfer privato verso l'aeroporto."],
                         ],
                         'transfer_included' => false,
-                        'transfer_price_gross' => 15,
-                        'transfer_price_net' => 12,
+                        'transfer_price' => 15,
+                        'flight_hotel_enabled' => true,
+                        'min_nights' => 3,
                         'is_featured' => true,
                         'sort_order' => 1,
-                        'periods' => $this->seasons(490),
+                        'periods' => $this->seasons(70),
                     ],
                     [
                         'type' => PackageType::Excursion,
@@ -268,9 +311,7 @@ class DemoCatalogSeeder extends Seeder
                     'amenities' => ['Barriera corallina', 'Piscina riscaldata', 'Spa', 'Wi-Fi'],
                     'images' => [$this->image('coral1'), $this->image('coral2')],
                 ]],
-                'add_on_excursions' => [
-                    ['name' => 'Ras Mohammed in barca', 'description' => 'Snorkeling nel parco marino di Ras Mohammed, pranzo a bordo.', 'duration' => 'Intera giornata', 'adult_price_gross' => 60, 'adult_price_net' => 48, 'child_price_gross' => 35, 'child_price_net' => 28],
-                ],
+                'flights' => ['base_price' => 310],
                 'packages' => [
                     [
                         'type' => PackageType::Stay,
@@ -297,9 +338,11 @@ class DemoCatalogSeeder extends Seeder
                             ['day' => 'Giorno 8', 'title' => 'Partenza', 'description' => "Check-out ed eventuale transfer verso l'aeroporto."],
                         ],
                         'transfer_included' => true,
+                        'flight_hotel_enabled' => true,
+                        'min_nights' => 3,
                         'is_featured' => true,
                         'sort_order' => 5,
-                        'periods' => $this->seasons(590),
+                        'periods' => $this->seasons(84),
                     ],
                 ],
             ],
@@ -319,9 +362,7 @@ class DemoCatalogSeeder extends Seeder
                     'amenities' => ['Pontile sulla barriera', 'Miniclub', 'Piscina', 'Wi-Fi'],
                     'images' => [$this->image('dolphin1')],
                 ]],
-                'add_on_excursions' => [
-                    ['name' => 'Snorkeling con i delfini a Samadai', 'description' => 'Uscita in barca alla laguna dei delfini.', 'duration' => 'Intera giornata', 'adult_price_gross' => 70, 'adult_price_net' => 56, 'child_price_gross' => 40, 'child_price_net' => 32],
-                ],
+                'flights' => null,
                 'packages' => [
                     [
                         'type' => PackageType::Stay,
@@ -337,15 +378,15 @@ class DemoCatalogSeeder extends Seeder
                         'accommodation' => 'Resort 4 stelle con miniclub',
                         'departures' => ['Aeroporto di Marsa Alam'],
                         'short_description' => 'Vacanza per famiglie sul mare più incontaminato del Mar Rosso.',
-                        'description' => "Un resort pensato per le famiglie, con miniclub e pontile direttamente sulla barriera.\n\nI bambini fino a 13 anni hanno una quota dedicata.",
+                        'description' => "Un resort pensato per le famiglie, con miniclub e pontile direttamente sulla barriera.\n\nI bambini fino a 17 anni hanno una quota dedicata.",
                         'highlights' => ['Ideale per famiglie', 'Miniclub', 'Pontile sulla barriera', 'Quota bambini ridotta'],
                         'included' => ['7 pernottamenti', 'Mezza pensione', 'Miniclub', 'Assistenza in loco'],
                         'excluded' => $stayExcluded,
                         'itinerary' => [],
-                        'child_max_age' => 13,
                         'transfer_included' => true,
+                        'min_nights' => 3,
                         'sort_order' => 6,
-                        'periods' => $this->seasons(520),
+                        'periods' => $this->seasons(74),
                     ],
                     [
                         'type' => PackageType::Transfer,

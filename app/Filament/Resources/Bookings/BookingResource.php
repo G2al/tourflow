@@ -52,9 +52,9 @@ class BookingResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $pending = Booking::where('status', BookingStatus::Pending)->count();
+        $count = Booking::whereIn('status', self::toHandle())->count();
 
-        return $pending > 0 ? (string) $pending : null;
+        return $count > 0 ? (string) $count : null;
     }
 
     public static function getNavigationBadgeColor(): string
@@ -64,7 +64,17 @@ class BookingResource extends Resource
 
     public static function getNavigationBadgeTooltip(): string
     {
-        return 'Prenotazioni in attesa';
+        return 'Pratiche confermate in attesa di pagamento';
+    }
+
+    /**
+     * Pratiche confermate di cui non è ancora arrivato l'acconto.
+     *
+     * @return array<int, BookingStatus>
+     */
+    public static function toHandle(): array
+    {
+        return [BookingStatus::Confirmed, BookingStatus::ProformaSent, BookingStatus::ProformaViewed];
     }
 
     public static function getPages(): array

@@ -33,11 +33,12 @@ class InsuranceForm
                             ->label('Descrizione / coperture')
                             ->rows(3)
                             ->columnSpanFull(),
-                        PriceFields::pair('price', 'Prezzo per persona', required: true)
-                            ->columnSpanFull(),
+                        PriceFields::money('price', 'Prezzo per persona', required: true)
+                            ->helperText('Applicato a ogni passeggero pagante (infant esclusi).'),
                         Toggle::make('is_active')
                             ->label('Attiva')
-                            ->default(true),
+                            ->default(true)
+                            ->inline(false),
                     ]),
             ]);
     }

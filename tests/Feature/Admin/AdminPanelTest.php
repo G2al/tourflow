@@ -2,52 +2,26 @@
 
 namespace Tests\Feature\Admin;
 
-use App\Enums\UserRole;
 use App\Models\Destination;
-use App\Models\Excursion;
+use App\Models\Flight;
 use App\Models\Hotel;
 use App\Models\Insurance;
+use App\Models\LegalPage;
 use App\Models\Package;
-use App\Models\User;
-use App\Services\BookingService;
-use Database\Seeders\DatabaseSeeder;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
-use Tests\TestCase;
 
-class AdminPanelTest extends TestCase
+class AdminPanelTest extends AdminTestCase
 {
-    use RefreshDatabase;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $this->travelTo(Carbon::parse('2026-10-09 10:00:00'));
-        $this->seed(DatabaseSeeder::class);
-    }
-
-    private function admin(): User
-    {
-        return User::where('role', UserRole::Admin)->firstOrFail();
-    }
-
     public function test_agency_users_cannot_access_the_panel(): void
     {
-        $this->actingAs(User::where('role', UserRole::Agency)->firstOrFail())
+        $this->actingAs($this->agencyUser())
             ->get('/admin')
             ->assertForbidden();
     }
 
     public function test_every_admin_page_renders(): void
     {
+        $booking = $this->createBooking();
         $package = Package::firstOrFail();
-        $booking = app(BookingService::class)->create($package, [
-            'departure_date' => '2026-11-14',
-            'contact' => ['first_name' => 'Luca', 'last_name' => 'Bianchi', 'email' => 'luca@example.com', 'phone' => '3332222222'],
-            'participants' => [['first_name' => 'Luca', 'last_name' => 'Bianchi', 'birth_date' => '1985-03-10', 'gender' => 'M']],
-            'insurance_ids' => [$package->insurances()->value('insurances.id')],
-        ], User::where('role', UserRole::Agency)->first());
 
         $urls = [
             '/admin',
@@ -62,13 +36,16 @@ class AdminPanelTest extends TestCase
             '/admin/destinations/'.Destination::first()->id.'/edit',
             '/admin/hotels',
             '/admin/hotels/'.Hotel::first()->id.'/edit',
-            '/admin/excursions',
-            '/admin/excursions/'.Excursion::first()->id.'/edit',
+            '/admin/flights',
+            '/admin/flights/create',
+            '/admin/flights/'.Flight::first()->id.'/edit',
             '/admin/insurances',
             '/admin/insurances/'.Insurance::first()->id.'/edit',
+            '/admin/legal-pages',
+            '/admin/legal-pages/'.LegalPage::first()->id.'/edit',
             '/admin/users',
             '/admin/users/create',
-            '/admin/users/'.User::where('role', UserRole::Agency)->first()->id.'/edit',
+            '/admin/users/'.$this->agencyUser()->id.'/edit',
             '/admin/settings',
         ];
 
@@ -79,20 +56,38 @@ class AdminPanelTest extends TestCase
         }
     }
 
-    public function test_booking_page_shows_participants_and_agency(): void
+    public function test_booking_page_shows_services_passengers_and_agency(): void
     {
-        $package = Package::firstOrFail();
-        $booking = app(BookingService::class)->create($package, [
-            'departure_date' => '2026-11-14',
-            'contact' => ['first_name' => 'Luca', 'last_name' => 'Bianchi', 'email' => 'luca@example.com', 'phone' => '3332222222'],
-            'participants' => [['first_name' => 'Luca', 'last_name' => 'Bianchi', 'birth_date' => '1985-03-10', 'gender' => 'M', 'tax_code' => 'BNCLCU85C10H501X']],
-        ], User::where('role', UserRole::Agency)->first());
+        $booking = $this->createBooking();
 
         $this->actingAs($this->admin())
             ->get("/admin/bookings/{$booking->id}")
             ->assertOk()
             ->assertSee($booking->code)
+            ->assertSee('Hurghada All Inclusive')
+            ->assertSee('Volo + hotel')
             ->assertSee('BNCLCU85C10H501X')
-            ->assertSee('Viaggi Sole Srl');
+            ->assertSee('Viaggi Sole Srl')
+            ->assertSee('Proforma inviata');
+    }
+
+    public function test_admin_can_open_documents_without_marking_the_proforma_as_read(): void
+    {
+        $booking = $this->createBooking();
+
+        $this->actingAs($this->admin());
+        $this->get(route('admin.bookings.document', [$booking, 'quote']))->assertOk()->assertHeader('content-type', 'application/pdf');
+        $this->get(route('admin.bookings.document', [$booking, 'proforma']))->assertOk();
+
+        $this->assertNull($booking->fresh()->proforma_viewed_at);
+    }
+
+    public function test_documents_are_admin_only(): void
+    {
+        $booking = $this->createBooking();
+
+        $this->actingAs($this->agencyUser())
+            ->get(route('admin.bookings.document', [$booking, 'proforma']))
+            ->assertForbidden();
     }
 }

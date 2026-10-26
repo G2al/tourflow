@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Users\Schemas;
 
 use App\Enums\UserRole;
+use App\Models\Setting;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -60,6 +61,14 @@ class UserForm
                     ->columns(2)
                     ->columnSpanFull()
                     ->schema([
+                        TextInput::make('fee_percent')
+                            ->label('Fee agenzia')
+                            ->helperText(fn () => 'Lascia vuoto per usare la fee predefinita ('.Setting::get('default_agency_fee_percent').'%).')
+                            ->suffix('%')
+                            ->numeric()
+                            ->minValue(0)
+                            ->maxValue(100)
+                            ->columnSpanFull(),
                         TextInput::make('company_name')
                             ->label('Ragione sociale')
                             ->required()
@@ -89,6 +98,7 @@ class UserForm
                             ->maxLength(10),
                         TextInput::make('province')
                             ->label('Provincia')
+                            ->required()
                             ->maxLength(5),
                         TextInput::make('country')
                             ->label('Nazione (ISO)')
@@ -96,9 +106,11 @@ class UserForm
                             ->length(2),
                         TextInput::make('phone')
                             ->label('Telefono agenzia')
+                            ->required()
                             ->tel(),
                         TextInput::make('email')
                             ->label('Email agenzia')
+                            ->required()
                             ->email(),
                         TextInput::make('pec')
                             ->label('PEC')

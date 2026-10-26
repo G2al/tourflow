@@ -4,11 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\PackageType;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Api\QuoteRequest;
 use App\Http\Resources\PackageCardResource;
 use App\Http\Resources\PackageResource;
 use App\Models\Package;
-use App\Services\PriceCalculator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -16,6 +15,13 @@ use Illuminate\Validation\ValidationException;
 
 class PackageController extends Controller
 {
+    /**
+     * Prezzo "a partire da" in SQL: quota base minima tra i periodi futuri,
+     * moltiplicata per le notti consigliate nei soggiorni.
+     */
+    private const STARTING_PRICE_SQL = "(select min(pp.adult_price) from package_periods pp where pp.package_id = packages.id and pp.end_date >= ?)
+        * (case when packages.type = 'stay' and packages.nights > 0 then packages.nights else 1 end)";
+
     /**
      * Elenco pacchetti pubblicati. Filtri: destination (slug o nome), type
      * (Soggiorno|Transfer|Escursione), search, days / min_days / max_days,
@@ -41,29 +47,31 @@ class PackageController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $priceColumn = $request->user('sanctum')?->isAgency() ? 'adult_price_net' : 'adult_price_gross';
         $type = $request->filled('type') ? PackageType::fromInput($request->input('type')) : null;
 
         if ($request->filled('type') && $type === null) {
             throw ValidationException::withMessages(['type' => 'Tipo non valido: usare Soggiorno, Transfer o Escursione.']);
         }
 
+        $today = today()->toDateString();
+
         $packages = Package::published()
+            ->select('packages.*')
+            ->selectRaw(self::STARTING_PRICE_SQL.' as starting_price', [$today])
             ->with([
                 'destination',
                 'periods' => fn ($query) => $query->whereDate('end_date', '>=', today()),
             ])
-            ->withMin(['periods as min_price' => fn ($query) => $query->whereDate('end_date', '>=', today())], $priceColumn)
-            ->when($request->filled('destination'), fn ($query) => $query->whereHas(
+            ->when($request->filled('destination'), fn (Builder $query) => $query->whereHas(
                 'destination', fn ($q) => $q->where('slug', $request->input('destination'))->orWhere('name', $request->input('destination'))
             ))
-            ->when($type, fn ($query) => $query->where('type', $type))
-            ->when($request->filled('days'), fn ($query) => $query->where('nights', $request->integer('days') - 1))
-            ->when($request->filled('min_days'), fn ($query) => $query->where('nights', '>=', $request->integer('min_days') - 1))
-            ->when($request->filled('max_days'), fn ($query) => $query->where('nights', '<=', $request->integer('max_days') - 1))
-            ->when($request->filled('departure'), fn ($query) => $query->whereJsonContains('departures', $request->input('departure')))
-            ->when($request->filled('board'), fn ($query) => $query->where('board', $request->input('board')))
-            ->when($request->filled('search'), function ($query) use ($request) {
+            ->when($type, fn (Builder $query) => $query->where('type', $type))
+            ->when($request->filled('days'), fn (Builder $query) => $query->where('nights', $request->integer('days') - 1))
+            ->when($request->filled('min_days'), fn (Builder $query) => $query->where('nights', '>=', $request->integer('min_days') - 1))
+            ->when($request->filled('max_days'), fn (Builder $query) => $query->where('nights', '<=', $request->integer('max_days') - 1))
+            ->when($request->filled('departure'), fn (Builder $query) => $query->whereJsonContains('departures', $request->input('departure')))
+            ->when($request->filled('board'), fn (Builder $query) => $query->where('board', $request->input('board')))
+            ->when($request->filled('search'), function (Builder $query) use ($request) {
                 $term = '%'.$request->input('search').'%';
                 $query->where(fn ($q) => $q
                     ->where('title', 'like', $term)
@@ -72,21 +80,16 @@ class PackageController extends Controller
                     ->orWhereHas('destination', fn ($d) => $d->where('name', 'like', $term)->orWhere('country', 'like', $term))
                     ->orWhereHas('hotel', fn ($h) => $h->where('name', 'like', $term)));
             })
-            ->when($request->filled('date'), fn ($query) => $query->whereHas('periods', fn ($q) => $q
+            ->when($request->filled('date'), fn (Builder $query) => $query->whereHas('periods', fn ($q) => $q
                 ->whereDate('start_date', '<=', $request->input('date'))
                 ->whereDate('end_date', '>=', $request->input('date'))))
-            // Filtri sul prezzo "a partire da" (minimo tra i periodi non scaduti).
-            ->when($request->filled('max_price'), fn ($query) => $query->whereHas('periods', fn ($q) => $q
-                ->whereDate('end_date', '>=', today())
-                ->where($priceColumn, '<=', $request->input('max_price'))))
-            ->when($request->filled('min_price'), fn ($query) => $query->whereDoesntHave('periods', fn ($q) => $q
-                ->whereDate('end_date', '>=', today())
-                ->where($priceColumn, '<', $request->input('min_price'))))
-            ->when($request->boolean('featured'), fn ($query) => $query->where('is_featured', true))
-            ->tap(fn ($query) => match ($request->input('sort')) {
-                'price_asc' => $query->orderBy('min_price'),
-                'price_desc' => $query->orderByDesc('min_price'),
-                'duration' => $query->orderBy('nights')->orderBy('min_price'),
+            ->when($request->filled('max_price'), fn (Builder $query) => $query->whereRaw(self::STARTING_PRICE_SQL.' <= CAST(? AS DECIMAL(10,2))', [$today, $request->input('max_price')]))
+            ->when($request->filled('min_price'), fn (Builder $query) => $query->whereRaw(self::STARTING_PRICE_SQL.' >= CAST(? AS DECIMAL(10,2))', [$today, $request->input('min_price')]))
+            ->when($request->boolean('featured'), fn (Builder $query) => $query->where('is_featured', true))
+            ->tap(fn (Builder $query) => match ($request->input('sort')) {
+                'price_asc' => $query->orderBy('starting_price'),
+                'price_desc' => $query->orderByDesc('starting_price'),
+                'duration' => $query->orderBy('nights')->orderBy('starting_price'),
                 'newest' => $query->latest(),
                 // "recommended" e "rating" (recensioni non gestite): ordine scelto dall'admin.
                 default => $query->orderByDesc('is_featured')->orderBy('sort_order')->latest(),
@@ -100,13 +103,12 @@ class PackageController extends Controller
     /**
      * Valori disponibili per i filtri del catalogo, ricavati dai pacchetti pubblicati.
      */
-    public function filters(Request $request): JsonResponse
+    public function filters(): JsonResponse
     {
-        $net = (bool) $request->user('sanctum')?->isAgency();
         $packages = Package::published()->with(['destination', 'periods'])->get();
 
         $sorted = fn ($values) => $values->filter()->unique()->sort(SORT_NATURAL | SORT_FLAG_CASE)->values();
-        $prices = $packages->map(fn (Package $package) => $package->startingPrice($net))->filter();
+        $prices = $packages->map(fn (Package $package) => $package->startingPrice())->filter();
 
         return response()->json(['data' => [
             'destinations' => $packages->pluck('destination')->unique('id')->sortBy('sort_order')->values()
@@ -125,26 +127,6 @@ class PackageController extends Controller
     {
         abort_unless($package->is_active, 404);
 
-        return new PackageResource($package->load(['destination', 'hotel', 'periods', 'excursions', 'insurances']));
-    }
-
-    /**
-     * Preventivo senza salvare nulla: utile al frontend per mostrare il
-     * totale mentre l'utente compila il form di prenotazione.
-     */
-    public function quote(QuoteRequest $request, Package $package, PriceCalculator $calculator): JsonResponse
-    {
-        abort_unless($package->is_active, 404);
-
-        $data = $request->validated();
-
-        return response()->json(['data' => $calculator->calculate(
-            $package,
-            $data['departure_date'],
-            array_column($data['participants'], 'birth_date'),
-            $data['excursion_ids'] ?? [],
-            $data['insurance_ids'] ?? [],
-            (bool) $request->user('sanctum')?->isAgency(),
-        )]);
+        return new PackageResource($package->load(['destination', 'hotel.roomTypes', 'periods', 'flights']));
     }
 }

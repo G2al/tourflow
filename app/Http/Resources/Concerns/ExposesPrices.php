@@ -5,33 +5,35 @@ namespace App\Http\Resources\Concerns;
 use Illuminate\Http\Request;
 
 /**
- * Gli ospiti vedono solo il prezzo lordo. Le agenzie vedono il netto in
- * "{key}" e il lordo (prezzo al pubblico) in "{key}Gross".
+ * Tutti vedono il prezzo al pubblico. Le agenzie ricevono in più il dettaglio
+ * della loro fee ("agencyFee"), da mostrare su richiesta.
  */
 trait ExposesPrices
 {
-    protected function isAgencyViewer(Request $request): bool
+    protected function agencyFeePercent(Request $request): ?float
     {
-        return (bool) $request->user('sanctum')?->isAgency();
-    }
+        $user = $request->user('sanctum');
 
-    protected function priceType(Request $request): string
-    {
-        return $this->isAgencyViewer($request) ? 'net' : 'gross';
+        return $user?->isAgency() ? $user->agency?->feePercent() : null;
     }
 
     /**
-     * @return array<string, float|null>
+     * @return array<string, mixed>
      */
-    protected function price(Request $request, string $key, mixed $gross, mixed $net): array
+    protected function agencyFee(Request $request, ?float $price): array
     {
-        $gross = $gross === null ? null : (float) $gross;
-        $net = $net === null ? null : (float) $net;
+        $percent = $this->agencyFeePercent($request);
 
-        if (! $this->isAgencyViewer($request)) {
-            return [$key => $gross];
+        if ($percent === null) {
+            return [];
         }
 
-        return [$key => $net, "{$key}Gross" => $gross];
+        $amount = $price === null ? null : round($price * $percent / 100, 2);
+
+        return ['agencyFee' => [
+            'percent' => $percent,
+            'amount' => $amount,
+            'netPrice' => $price === null ? null : round($price - $amount, 2),
+        ]];
     }
 }

@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Enums\AgeCategory;
+use App\Enums\BookingMode;
 use App\Enums\PackageType;
 use App\Enums\PriceUnit;
 use App\Models\Concerns\HasUniqueSlug;
@@ -11,7 +11,6 @@ use Carbon\CarbonPeriod;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Collection;
@@ -26,6 +25,16 @@ class Package extends Model
     ];
 
     protected string $slugSource = 'title';
+
+    protected static function booted(): void
+    {
+        // Escursioni e transfer si svolgono in giornata.
+        static::saving(function (Package $package) {
+            if ($package->type !== PackageType::Stay) {
+                $package->nights = 0;
+            }
+        });
+    }
 
     protected $fillable = [
         'destination_id',
@@ -51,13 +60,12 @@ class Package extends Model
         'valid_to',
         'period_label',
         'departures',
+        'hotel_only_enabled',
+        'flight_hotel_enabled',
+        'min_nights',
         'transfer_included',
-        'transfer_price_gross',
-        'transfer_price_net',
-        'registration_fee_gross',
-        'registration_fee_net',
-        'infant_max_age',
-        'child_max_age',
+        'transfer_price',
+        'registration_fee',
         'cancellation_policy',
         'notes',
         'is_active',
@@ -78,11 +86,11 @@ class Package extends Model
             'departures' => 'array',
             'valid_from' => 'date',
             'valid_to' => 'date',
+            'hotel_only_enabled' => 'boolean',
+            'flight_hotel_enabled' => 'boolean',
             'transfer_included' => 'boolean',
-            'transfer_price_gross' => 'decimal:2',
-            'transfer_price_net' => 'decimal:2',
-            'registration_fee_gross' => 'decimal:2',
-            'registration_fee_net' => 'decimal:2',
+            'transfer_price' => 'decimal:2',
+            'registration_fee' => 'decimal:2',
             'is_active' => 'boolean',
             'is_featured' => 'boolean',
         ];
@@ -103,19 +111,21 @@ class Package extends Model
         return $this->hasMany(PackagePeriod::class)->orderBy('start_date');
     }
 
-    public function excursions(): BelongsToMany
+    public function bookingItems(): HasMany
     {
-        return $this->belongsToMany(Excursion::class);
+        return $this->hasMany(BookingItem::class);
     }
 
-    public function insurances(): BelongsToMany
+    /**
+     * Voli prenotabili per la destinazione del pacchetto (volo + hotel).
+     */
+    public function flights(): HasMany
     {
-        return $this->belongsToMany(Insurance::class);
-    }
-
-    public function bookings(): HasMany
-    {
-        return $this->hasMany(Booking::class);
+        return $this->hasMany(Flight::class, 'destination_id', 'destination_id')
+            ->where('is_active', true)
+            ->whereDate('outbound_date', '>', today())
+            ->orderBy('outbound_date')
+            ->orderBy('departure_airport');
     }
 
     /**
@@ -142,12 +152,25 @@ class Package extends Model
             ->first(fn (PackagePeriod $period) => $date->between($period->start_date, $period->end_date));
     }
 
-    public function ageCategoryFor(int $age): AgeCategory
+    public function isStay(): bool
     {
-        return match (true) {
-            $age <= $this->infant_max_age => AgeCategory::Infant,
-            $age <= $this->child_max_age => AgeCategory::Child,
-            default => AgeCategory::Adult,
+        return $this->type === PackageType::Stay;
+    }
+
+    /**
+     * Modalità con cui il pacchetto si può prenotare.
+     *
+     * @return array<int, BookingMode>
+     */
+    public function bookingModes(): array
+    {
+        return match ($this->type) {
+            PackageType::Stay => array_values(array_filter([
+                $this->hotel_only_enabled ? BookingMode::HotelOnly : null,
+                $this->flight_hotel_enabled ? BookingMode::FlightHotel : null,
+            ])),
+            PackageType::Excursion => [BookingMode::Excursion],
+            PackageType::Transfer => [BookingMode::Transfer],
         };
     }
 
@@ -162,13 +185,29 @@ class Package extends Model
     }
 
     /**
-     * Prezzo "a partire da" (quota base più bassa tra i periodi futuri).
+     * Quota base più bassa tra i periodi futuri: a notte per i soggiorni,
+     * a persona per le escursioni, a servizio per i transfer.
      */
-    public function startingPrice(bool $net): ?float
+    public function lowestBasePrice(): ?float
     {
-        $price = $this->upcomingPeriods()->min($net ? 'adult_price_net' : 'adult_price_gross');
+        $price = $this->upcomingPeriods()->min('adult_price');
 
         return $price === null ? null : (float) $price;
+    }
+
+    /**
+     * Prezzo "a partire da" mostrato nel catalogo: per i soggiorni è la quota
+     * a notte più bassa moltiplicata per le notti consigliate.
+     */
+    public function startingPrice(): ?float
+    {
+        $base = $this->lowestBasePrice();
+
+        if ($base === null) {
+            return null;
+        }
+
+        return $this->isStay() ? round($base * max(1, $this->nights), 2) : $base;
     }
 
     /**

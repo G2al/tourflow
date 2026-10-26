@@ -24,12 +24,8 @@ class InsurancesTable
                 TextColumn::make('type')
                     ->label('Tipo')
                     ->badge(),
-                TextColumn::make('price_gross')
-                    ->label('Lordo')
-                    ->money('EUR')
-                    ->sortable(),
-                TextColumn::make('price_net')
-                    ->label('Netto')
+                TextColumn::make('price')
+                    ->label('Prezzo a persona')
                     ->money('EUR')
                     ->sortable(),
                 ToggleColumn::make('is_active')

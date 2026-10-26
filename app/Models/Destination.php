@@ -33,9 +33,9 @@ class Destination extends Model
         return $this->hasMany(Hotel::class);
     }
 
-    public function excursions(): HasMany
+    public function flights(): HasMany
     {
-        return $this->hasMany(Excursion::class);
+        return $this->hasMany(Flight::class);
     }
 
     public function packages(): HasMany

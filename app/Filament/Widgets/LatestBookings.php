@@ -19,26 +19,24 @@ class LatestBookings extends TableWidget
     public function table(Table $table): Table
     {
         return $table
-            ->query(Booking::query()->with(['package', 'agency'])->latest()->limit(10))
+            ->query(Booking::query()->with(['items', 'agency'])->latest()->limit(10))
             ->paginated(false)
             ->recordUrl(fn (Booking $record) => BookingResource::getUrl('view', ['record' => $record]))
             ->columns([
                 TextColumn::make('code')
-                    ->label('Codice')
+                    ->label('Pratica')
                     ->weight('bold'),
                 TextColumn::make('created_at')
                     ->label('Ricevuta')
                     ->since(),
-                TextColumn::make('package.title')
-                    ->label('Pacchetto')
-                    ->limit(40),
-                TextColumn::make('departure_date')
-                    ->label('Partenza')
-                    ->date('d/m/Y'),
+                TextColumn::make('services')
+                    ->label('Servizi')
+                    ->state(fn (Booking $record) => $record->items->pluck('title')->join(', '))
+                    ->limit(50),
                 TextColumn::make('agency.company_name')
                     ->label('Agenzia')
-                    ->placeholder('Ospite'),
-                TextColumn::make('total_amount')
+                    ->placeholder('Cliente diretto'),
+                TextColumn::make('total')
                     ->label('Totale')
                     ->money('EUR'),
                 TextColumn::make('status')

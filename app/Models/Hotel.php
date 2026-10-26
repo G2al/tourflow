@@ -41,4 +41,9 @@ class Hotel extends Model
     {
         return $this->hasMany(Package::class);
     }
+
+    public function roomTypes(): HasMany
+    {
+        return $this->hasMany(RoomType::class)->orderBy('sort_order')->orderBy('id');
+    }
 }

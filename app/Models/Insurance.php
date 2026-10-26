@@ -3,17 +3,19 @@
 namespace App\Models;
 
 use App\Enums\InsuranceType;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
+/**
+ * Assicurazione facoltativa, a persona, aggiungibile a qualunque pratica.
+ */
 class Insurance extends Model
 {
     protected $fillable = [
         'name',
         'type',
         'description',
-        'price_gross',
-        'price_net',
+        'price',
         'is_active',
     ];
 
@@ -21,19 +23,13 @@ class Insurance extends Model
     {
         return [
             'type' => InsuranceType::class,
-            'price_gross' => 'decimal:2',
-            'price_net' => 'decimal:2',
+            'price' => 'decimal:2',
             'is_active' => 'boolean',
         ];
     }
 
-    public function packages(): BelongsToMany
+    public function scopeActive(Builder $query): Builder
     {
-        return $this->belongsToMany(Package::class);
-    }
-
-    public function price(bool $net): float
-    {
-        return (float) ($net ? $this->price_net : $this->price_gross);
+        return $query->where('is_active', true);
     }
 }

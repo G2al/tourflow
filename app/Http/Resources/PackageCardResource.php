@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\BookingMode;
 use App\Http\Resources\Concerns\ExposesPrices;
 use App\Models\Package;
 use App\Support\Media;
@@ -20,6 +21,8 @@ class PackageCardResource extends JsonResource
 
     public function toArray(Request $request): array
     {
+        $price = $this->startingPrice();
+
         return [
             // Contratto TravelPackage
             'slug' => $this->slug,
@@ -29,7 +32,7 @@ class PackageCardResource extends JsonResource
             'location' => $this->location ?? $this->destination->name,
             'image' => Media::url($this->cover_image),
             'type' => $this->type->getLabel(),
-            ...$this->price($request, 'price', $this->startingPrice(false), $this->startingPrice(true)),
+            'price' => $price,
             'days' => $this->days(),
             'nights' => $this->nights,
             'period' => $this->periodText(),
@@ -49,8 +52,11 @@ class PackageCardResource extends JsonResource
             'id' => $this->id,
             'typeKey' => $this->type->value,
             'priceUnit' => $this->price_unit->value,
-            'priceType' => $this->priceType($request),
+            'pricePerNight' => $this->isStay() ? $this->lowestBasePrice() : null,
             'currency' => 'EUR',
+            ...$this->agencyFee($request, $price),
+            'bookingModes' => array_map(fn (BookingMode $mode) => $mode->value, $this->bookingModes()),
+            'minNights' => $this->isStay() ? max(1, $this->min_nights) : null,
             'featured' => $this->is_featured,
             'destinationSlug' => $this->destination->slug,
             'validFrom' => $this->valid_from->toDateString(),

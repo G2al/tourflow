@@ -2,44 +2,38 @@
 
 namespace Tests\Feature\Admin;
 
+use App\Enums\BookingAction;
 use App\Enums\BookingStatus;
 use App\Enums\PriceUnit;
-use App\Enums\UserRole;
 use App\Filament\Pages\Settings;
 use App\Filament\Resources\Bookings\Pages\ViewBooking;
+use App\Filament\Resources\Flights\Pages\CreateFlight;
+use App\Filament\Resources\Hotels\Pages\EditHotel;
+use App\Filament\Resources\Hotels\RelationManagers\RoomTypesRelationManager;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
-use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Models\Destination;
-use App\Models\Insurance;
+use App\Models\Flight;
+use App\Models\Hotel;
 use App\Models\Package;
+use App\Models\RoomType;
 use App\Models\Setting;
 use App\Models\User;
-use App\Services\BookingService;
-use Database\Seeders\DatabaseSeeder;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
+use Filament\Actions\Testing\TestAction;
 use Livewire\Livewire;
-use Tests\TestCase;
 
-class AdminFormsTest extends TestCase
+class AdminFormsTest extends AdminTestCase
 {
-    use RefreshDatabase;
-
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->travelTo(Carbon::parse('2026-10-09 10:00:00'));
-        $this->seed(DatabaseSeeder::class);
-        $this->actingAs(User::where('role', UserRole::Admin)->firstOrFail());
+        $this->actingAs($this->admin());
     }
 
-    public function test_admin_can_create_a_package_with_periods_and_extras(): void
+    public function test_admin_can_create_a_stay_sold_as_hotel_only_and_flight_hotel(): void
     {
         $destination = Destination::where('name', 'Marsa Alam')->firstOrFail();
-        $excursion = $destination->excursions()->firstOrFail();
-        $insurance = Insurance::firstOrFail();
 
         Livewire::test(CreatePackage::class)
             ->fillForm([
@@ -49,39 +43,43 @@ class AdminFormsTest extends TestCase
                 'hotel_id' => $destination->hotels()->value('id'),
                 'title' => 'Marsa Alam Capodanno',
                 'location' => 'Port Ghalib · Marsa Alam',
-                'badge' => 'Ultimi posti',
                 'nights' => 7,
+                'min_nights' => 4,
+                'hotel_only_enabled' => true,
+                'flight_hotel_enabled' => true,
                 'board' => 'All Inclusive',
-                'accommodation' => 'Resort 4 stelle',
-                'departures' => ['Aeroporto di Marsa Alam'],
                 'valid_from' => '2026-12-20',
                 'valid_to' => '2027-01-10',
-                'description' => "Primo paragrafo.\n\nSecondo paragrafo.",
                 // Stato interno dei repeater "semplici": un elemento per voce.
-                'highlights' => [['value' => 'Capodanno sul mare'], ['value' => 'Cenone incluso']],
-                'included' => [['value' => '7 pernottamenti']],
-                'excluded' => [['value' => 'Volo']],
-                'itinerary' => [
-                    ['day' => 'Giorno 1', 'title' => 'Arrivo', 'description' => 'Sistemazione in hotel.'],
-                ],
+                'highlights' => [['value' => 'Capodanno sul mare']],
                 'periods' => [
-                    ['name' => 'Capodanno', 'start_date' => '2026-12-20', 'end_date' => '2027-01-10', 'adult_price_gross' => 1200, 'adult_price_net' => 1000],
+                    ['name' => 'Capodanno', 'start_date' => '2026-12-20', 'end_date' => '2027-01-10', 'adult_price' => 150, 'child_price' => 75],
                 ],
-                'excursions' => [$excursion->id],
-                'insurances' => [$insurance->id],
             ])
             ->call('create')
             ->assertHasNoFormErrors();
 
         $package = Package::where('title', 'Marsa Alam Capodanno')->firstOrFail();
         $this->assertSame('marsa-alam-capodanno', $package->slug);
-        $this->assertSame(['Capodanno sul mare', 'Cenone incluso'], $package->highlights);
-        $this->assertSame(['Aeroporto di Marsa Alam'], $package->departures);
-        $this->assertSame('Arrivo', $package->itinerary[0]['title']);
-        $this->assertCount(1, $package->periods);
-        $this->assertEquals(1000, $package->periods->first()->adult_price_net);
-        $this->assertEquals([$excursion->id], $package->excursions->pluck('id')->all());
-        $this->assertEquals(0, $package->registration_fee_gross);
+        $this->assertSame(4, $package->min_nights);
+        $this->assertTrue($package->flight_hotel_enabled);
+        $this->assertSame(['Capodanno sul mare'], $package->highlights);
+        $this->assertEquals(150, $package->periods->first()->adult_price);
+        $this->assertEquals(1050, $package->startingPrice());
+    }
+
+    public function test_stays_require_a_hotel(): void
+    {
+        Livewire::test(CreatePackage::class)
+            ->fillForm([
+                'type' => 'stay',
+                'destination_id' => Destination::where('name', 'Marsa Alam')->value('id'),
+                'title' => 'Senza hotel',
+                'valid_from' => '2026-12-20',
+                'valid_to' => '2027-01-10',
+            ])
+            ->call('create')
+            ->assertHasFormErrors(['hotel_id' => 'required']);
     }
 
     public function test_admin_can_create_a_transfer_priced_per_service(): void
@@ -97,7 +95,7 @@ class AdminFormsTest extends TestCase
                 'valid_from' => '2026-10-01',
                 'valid_to' => '2027-09-30',
                 'periods' => [
-                    ['start_date' => '2026-10-01', 'end_date' => '2027-09-30', 'adult_price_gross' => 25, 'adult_price_net' => 20],
+                    ['start_date' => '2026-10-01', 'end_date' => '2027-09-30', 'adult_price' => 25],
                 ],
             ])
             ->call('create')
@@ -109,17 +107,43 @@ class AdminFormsTest extends TestCase
         $this->assertNull($package->hotel_id);
     }
 
-    public function test_net_price_cannot_exceed_gross_price(): void
+    public function test_admin_can_add_a_room_type_with_allotment(): void
     {
-        $package = Package::firstOrFail();
+        $hotel = Hotel::firstOrFail();
 
-        Livewire::test(EditPackage::class, ['record' => $package->id])
-            ->fillForm(['registration_fee_gross' => 50, 'registration_fee_net' => 80])
-            ->call('save')
-            ->assertHasFormErrors(['registration_fee_net' => 'lte']);
+        Livewire::test(RoomTypesRelationManager::class, ['ownerRecord' => $hotel, 'pageClass' => EditHotel::class])
+            ->callAction(TestAction::make('create')->table(), [
+                'name' => 'Family room',
+                'supplement' => 10,
+                'max_occupancy' => 4,
+                'allotments' => [
+                    ['start_date' => '2026-11-01', 'end_date' => '2026-11-30', 'rooms' => 3],
+                ],
+            ])
+            ->assertHasNoActionErrors();
+
+        $roomType = RoomType::where('name', 'Family room')->firstOrFail();
+        $this->assertSame(3, $roomType->allotmentOn(now()->setDate(2026, 11, 15)));
     }
 
-    public function test_admin_can_create_an_agency_user(): void
+    public function test_admin_can_create_a_flight(): void
+    {
+        Livewire::test(CreateFlight::class)
+            ->fillForm([
+                'destination_id' => Destination::where('name', 'Marsa Alam')->value('id'),
+                'departure_airport' => 'BRI',
+                'outbound_date' => '2026-11-01',
+                'return_date' => '2026-11-08',
+                'seats' => 40,
+                'adult_price' => 320,
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame(7, Flight::where('departure_airport', 'BRI')->whereDate('outbound_date', '2026-11-01')->firstOrFail()->nights());
+    }
+
+    public function test_admin_can_create_an_agency_with_custom_fee(): void
     {
         Livewire::test(CreateUser::class)
             ->fillForm([
@@ -129,11 +153,15 @@ class AdminFormsTest extends TestCase
                 'password' => 'password123',
                 'is_active' => true,
                 'agency' => [
+                    'fee_percent' => 12.5,
                     'company_name' => 'Gialli Viaggi',
                     'vat_number' => '55566677788',
                     'address' => 'Via Dante 1',
                     'city' => 'Firenze',
                     'zip_code' => '50100',
+                    'province' => 'FI',
+                    'phone' => '055 123456',
+                    'email' => 'info@gialliviaggi.test',
                 ],
             ])
             ->call('create')
@@ -141,31 +169,30 @@ class AdminFormsTest extends TestCase
 
         $user = User::where('email', 'paolo@gialliviaggi.test')->firstOrFail();
         $this->assertTrue($user->isAgency());
-        $this->assertSame('Gialli Viaggi', $user->agency->company_name);
+        $this->assertSame(12.5, $user->agency->feePercent());
     }
 
-    public function test_admin_can_confirm_a_booking(): void
+    public function test_admin_can_register_deposit_and_cancel(): void
     {
-        $package = Package::firstOrFail();
-        $booking = app(BookingService::class)->create($package, [
-            'departure_date' => '2026-11-14',
-            'contact' => ['first_name' => 'Luca', 'last_name' => 'Bianchi', 'email' => 'luca@example.com', 'phone' => '3332222222'],
-            'participants' => [['first_name' => 'Luca', 'last_name' => 'Bianchi', 'birth_date' => '1985-03-10', 'gender' => 'M']],
-        ]);
+        $booking = $this->createBooking();
 
-        Livewire::test(ViewBooking::class, ['record' => $booking->id])
-            ->callAction('confirm');
+        Livewire::test(ViewBooking::class, ['record' => $booking->id])->callAction('deposit');
+        $this->assertSame(BookingStatus::DepositReceived, $booking->fresh()->status);
 
-        $this->assertSame(BookingStatus::Confirmed, $booking->fresh()->status);
+        $option = $this->createBooking(BookingAction::Option);
+        Livewire::test(ViewBooking::class, ['record' => $option->id])->callAction('cancel');
+        $this->assertSame(BookingStatus::Cancelled, $option->fresh()->status);
+        $this->assertNotNull($option->fresh()->cancelled_at);
     }
 
-    public function test_admin_can_update_settings(): void
+    public function test_admin_can_update_booking_settings(): void
     {
         Livewire::test(Settings::class)
-            ->fillForm(['whatsapp_number' => '393409998877'])
+            ->fillForm(['option_hours_guest' => 12, 'default_agency_fee_percent' => 8, 'bank_iban' => 'IT60X0542811101000000654321'])
             ->call('save')
             ->assertHasNoFormErrors();
 
-        $this->assertSame('393409998877', Setting::get('whatsapp_number'));
+        $this->assertSame(12, Setting::int('option_hours_guest'));
+        $this->assertSame(8.0, $this->agencyUser()->agency->feePercent());
     }
 }

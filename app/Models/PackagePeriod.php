@@ -5,6 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * Periodo tariffario di un pacchetto. Il significato dei prezzi dipende dal tipo:
+ * - soggiorno: a persona A NOTTE (adulto in doppia, 3°/4° letto, bambino, infant, singola);
+ * - escursione: a persona;
+ * - transfer: a servizio (solo adult_price).
+ */
 class PackagePeriod extends Model
 {
     protected $fillable = [
@@ -12,16 +18,11 @@ class PackagePeriod extends Model
         'name',
         'start_date',
         'end_date',
-        'adult_price_gross',
-        'adult_price_net',
-        'extra_bed_adult_price_gross',
-        'extra_bed_adult_price_net',
-        'child_price_gross',
-        'child_price_net',
-        'infant_price_gross',
-        'infant_price_net',
-        'single_supplement_gross',
-        'single_supplement_net',
+        'adult_price',
+        'extra_bed_adult_price',
+        'child_price',
+        'infant_price',
+        'single_supplement',
     ];
 
     protected function casts(): array
@@ -29,16 +30,11 @@ class PackagePeriod extends Model
         return [
             'start_date' => 'date',
             'end_date' => 'date',
-            'adult_price_gross' => 'decimal:2',
-            'adult_price_net' => 'decimal:2',
-            'extra_bed_adult_price_gross' => 'decimal:2',
-            'extra_bed_adult_price_net' => 'decimal:2',
-            'child_price_gross' => 'decimal:2',
-            'child_price_net' => 'decimal:2',
-            'infant_price_gross' => 'decimal:2',
-            'infant_price_net' => 'decimal:2',
-            'single_supplement_gross' => 'decimal:2',
-            'single_supplement_net' => 'decimal:2',
+            'adult_price' => 'decimal:2',
+            'extra_bed_adult_price' => 'decimal:2',
+            'child_price' => 'decimal:2',
+            'infant_price' => 'decimal:2',
+            'single_supplement' => 'decimal:2',
         ];
     }
 
@@ -48,12 +44,11 @@ class PackagePeriod extends Model
     }
 
     /**
-     * Restituisce il prezzo lordo o netto di una voce. Se la voce non è
-     * valorizzata si usa il fallback indicato.
+     * Prezzo di una voce, o il fallback se la voce non è valorizzata.
      */
-    public function price(string $field, bool $net, ?float $fallback = null): ?float
+    public function price(string $field, ?float $fallback = null): ?float
     {
-        $value = $this->{$field.($net ? '_net' : '_gross')};
+        $value = $this->{$field};
 
         return $value === null ? $fallback : (float) $value;
     }

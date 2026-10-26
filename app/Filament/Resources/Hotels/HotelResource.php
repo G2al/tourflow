@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Hotels;
 use App\Filament\Resources\Hotels\Pages\CreateHotel;
 use App\Filament\Resources\Hotels\Pages\EditHotel;
 use App\Filament\Resources\Hotels\Pages\ListHotels;
+use App\Filament\Resources\Hotels\RelationManagers\RoomTypesRelationManager;
 use App\Filament\Resources\Hotels\Schemas\HotelForm;
 use App\Filament\Resources\Hotels\Tables\HotelsTable;
 use App\Models\Hotel;
@@ -39,6 +40,13 @@ class HotelResource extends Resource
     public static function table(Table $table): Table
     {
         return HotelsTable::configure($table);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            RoomTypesRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

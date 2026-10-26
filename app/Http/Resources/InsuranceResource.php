@@ -2,7 +2,6 @@
 
 namespace App\Http\Resources;
 
-use App\Http\Resources\Concerns\ExposesPrices;
 use App\Models\Insurance;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -10,8 +9,6 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin Insurance */
 class InsuranceResource extends JsonResource
 {
-    use ExposesPrices;
-
     public function toArray(Request $request): array
     {
         return [
@@ -20,7 +17,7 @@ class InsuranceResource extends JsonResource
             'type' => $this->type->value,
             'typeLabel' => $this->type->getLabel(),
             'description' => $this->description,
-            ...$this->price($request, 'price', $this->price_gross, $this->price_net),
+            'pricePerPerson' => (float) $this->price,
         ];
     }
 }

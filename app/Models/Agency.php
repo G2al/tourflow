@@ -24,7 +24,15 @@ class Agency extends Model
         'sdi_code',
         'contact_person',
         'license_number',
+        'fee_percent',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'fee_percent' => 'decimal:2',
+        ];
+    }
 
     public function user(): BelongsTo
     {
@@ -34,6 +42,17 @@ class Agency extends Model
     public function bookings(): HasMany
     {
         return $this->hasMany(Booking::class);
+    }
+
+    /**
+     * Fee dell'agenzia in percentuale: quella personalizzata o il valore
+     * predefinito delle impostazioni.
+     */
+    public function feePercent(): float
+    {
+        return $this->fee_percent !== null
+            ? (float) $this->fee_percent
+            : Setting::float('default_agency_fee_percent');
     }
 
     public function fullAddress(): string

@@ -10,10 +10,11 @@ use Illuminate\Support\Arr;
 class SettingController extends Controller
 {
     /**
-     * Dati pubblici del tour operator (contatti, numero WhatsApp...).
+     * Dati pubblici del tour operator e regole di prenotazione (fasce d'età,
+     * durata delle opzioni, blocca prezzo, acconto...).
      */
     public function __invoke(): JsonResponse
     {
-        return response()->json(['data' => Arr::only(Setting::values(), array_keys(Setting::DEFAULTS))]);
+        return response()->json(['data' => Arr::only(Setting::values(), Setting::PUBLIC_KEYS)]);
     }
 }

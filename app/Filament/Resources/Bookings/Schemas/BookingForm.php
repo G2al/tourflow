@@ -3,10 +3,12 @@
 namespace App\Filament\Resources\Bookings\Schemas;
 
 use App\Enums\BookingStatus;
+use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 /**
@@ -26,7 +28,15 @@ class BookingForm
                         Select::make('status')
                             ->label('Stato')
                             ->options(BookingStatus::class)
-                            ->required(),
+                            ->required()
+                            ->live(),
+                        DateTimePicker::make('option_expires_at')
+                            ->label('Scadenza opzione')
+                            ->helperText('Puoi prolungarla: allo scadere la disponibilità torna libera.')
+                            ->native(false)
+                            ->displayFormat('d/m/Y H:i')
+                            ->seconds(false)
+                            ->visible(fn (Get $get) => in_array($get('status'), [BookingStatus::Option, BookingStatus::Option->value], true)),
                         Textarea::make('admin_notes')
                             ->label('Note interne')
                             ->helperText('Visibili solo agli amministratori.')
