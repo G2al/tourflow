@@ -3,9 +3,11 @@
 namespace App\Filament\Resources\Packages\Schemas;
 
 use App\Enums\BoardType;
+use App\Enums\PackageOffer;
 use App\Enums\PackageType;
-use App\Enums\PriceUnit;
 use App\Filament\Support\PriceFields;
+use App\Models\Flight;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Repeater;
@@ -14,6 +16,7 @@ use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\ToggleButtons;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
@@ -49,28 +52,25 @@ class PackageForm
             ->icon('heroicon-o-information-circle')
             ->columns(2)
             ->schema([
-                Select::make('type')
-                    ->label('Tipo')
-                    ->options(PackageType::class)
-                    ->default(PackageType::Stay)
+                ToggleButtons::make('offer')
+                    ->label('Cosa stai vendendo?')
+                    ->options(PackageOffer::class)
+                    ->default(PackageOffer::HotelOnly)
+                    ->inline()
                     ->required()
                     ->live()
                     ->afterStateUpdated(function (Set $set, $state) {
-                        $type = $state instanceof PackageType ? $state : PackageType::tryFrom((string) $state);
-                        $set('price_unit', $type?->defaultPriceUnit());
+                        $offer = $state instanceof PackageOffer ? $state : PackageOffer::tryFrom((string) $state);
 
-                        if ($type !== PackageType::Stay) {
+                        if ($offer && ! $offer->isStay()) {
                             $set('nights', 0);
                             $set('hotel_id', null);
+                        } elseif ($offer) {
+                            $set('nights', 7);
                         }
-                    }),
-                Select::make('price_unit')
-                    ->label('Prezzo')
-                    ->options(PriceUnit::class)
-                    ->default(PriceUnit::PerPerson)
-                    ->required()
-                    ->live()
-                    ->helperText('"A servizio": un prezzo unico per tutto il gruppo (es. transfer privato).'),
+                    })
+                    ->helperText(fn (Get $get) => self::offer($get)?->getDescription())
+                    ->columnSpanFull(),
                 TextInput::make('title')
                     ->label('Titolo')
                     ->required()
@@ -124,18 +124,11 @@ class PackageForm
                     ->label("Punti d'incontro / partenza")
                     ->placeholder('Es. Aeroporto di Hurghada (premi Invio per aggiungere)')
                     ->columnSpanFull(),
-                Section::make('Vendita del soggiorno')
-                    ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
+                Section::make('Soggiorno e voli')
+                    ->visible(fn (Get $get) => self::offer($get)?->isStay() ?? false)
                     ->columns(2)
                     ->columnSpanFull()
                     ->schema([
-                        Toggle::make('hotel_only_enabled')
-                            ->label('Vendibile come "Solo soggiorno"')
-                            ->helperText('Il cliente sceglie liberamente le date di check-in e check-out.')
-                            ->default(true),
-                        Toggle::make('flight_hotel_enabled')
-                            ->label('Vendibile come "Volo + hotel"')
-                            ->helperText('Usa i voli inseriti per questa destinazione: le notti sono quelle del volo.'),
                         TextInput::make('nights')
                             ->label('Notti consigliate')
                             ->numeric()
@@ -146,10 +139,37 @@ class PackageForm
                             ->helperText('Usate per il prezzo "a partire da" mostrato nel catalogo.'),
                         TextInput::make('min_nights')
                             ->label('Soggiorno minimo (notti)')
+                            ->helperText('Per le prenotazioni a date libere (senza volo).')
                             ->numeric()
                             ->minValue(1)
                             ->default(1)
-                            ->required(),
+                            ->required()
+                            ->visible(fn (Get $get) => self::offer($get) === PackageOffer::HotelOnly),
+                        Toggle::make('flight_hotel_enabled')
+                            ->label('Volo facoltativo')
+                            ->helperText('Il cliente può scegliere se aggiungere uno dei voli abbinati o venire con il proprio.')
+                            ->live()
+                            ->visible(fn (Get $get) => self::offer($get) === PackageOffer::HotelOnly)
+                            ->columnSpanFull(),
+                        CheckboxList::make('flights')
+                            ->label('Voli abbinati')
+                            ->helperText('Voli futuri della destinazione (Catalogo → Voli). Le notti in hotel sono quelle del volo scelto.')
+                            ->relationship(
+                                'flights',
+                                'outbound_date',
+                                fn (Builder $query, Get $get) => $query
+                                    ->where('flights.destination_id', $get('destination_id'))
+                                    ->whereDate('flights.outbound_date', '>', today()),
+                            )
+                            ->getOptionLabelFromRecordUsing(fn (Flight $record) => $record->label()
+                                ." · {$record->nights()} notti · € ".number_format((float) $record->adult_price, 0, ',', '.')." · {$record->seats} posti")
+                            ->required(fn (Get $get) => self::offer($get)?->includesFlight() ?? false)
+                            ->visible(fn (Get $get) => self::offer($get)?->includesFlight()
+                                || (self::offer($get) === PackageOffer::HotelOnly && $get('flight_hotel_enabled')))
+                            ->bulkToggleable()
+                            ->searchable()
+                            ->columns(2)
+                            ->columnSpanFull(),
                     ]),
                 Section::make('Validità')
                     ->columns(3)
@@ -326,7 +346,8 @@ class PackageForm
             ->icon('heroicon-o-receipt-percent')
             ->schema([
                 Section::make('Trasferimenti')
-                    ->visible(fn (Get $get) => self::type($get) === PackageType::Stay)
+                    ->description('Nel "Pacchetto completo" i trasferimenti sono sempre inclusi.')
+                    ->visible(fn (Get $get) => self::type($get) === PackageType::Stay && self::offer($get) !== PackageOffer::FullPackage)
                     ->schema([
                         Toggle::make('transfer_included')
                             ->label('Trasferimenti inclusi nella quota')
@@ -361,18 +382,21 @@ class PackageForm
             ]);
     }
 
+    private static function offer(Get $get, string $path = ''): ?PackageOffer
+    {
+        $state = $get($path.'offer');
+
+        return $state instanceof PackageOffer ? $state : PackageOffer::tryFrom((string) $state);
+    }
+
     private static function type(Get $get, string $path = ''): ?PackageType
     {
-        $state = $get($path.'type');
-
-        return $state instanceof PackageType ? $state : PackageType::tryFrom((string) $state);
+        return self::offer($get, $path)?->packageType();
     }
 
     private static function isPerService(Get $get, string $path = ''): bool
     {
-        $state = $get($path.'price_unit');
-
-        return ($state instanceof PriceUnit ? $state : PriceUnit::tryFrom((string) $state)) === PriceUnit::PerService;
+        return self::offer($get, $path) === PackageOffer::Transfer;
     }
 
     /**

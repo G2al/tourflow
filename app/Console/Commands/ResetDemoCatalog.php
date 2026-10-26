@@ -22,7 +22,7 @@ class ResetDemoCatalog extends Command
 
     private const TABLES = [
         'booking_insurances', 'booking_item_rooms', 'booking_items', 'booking_passengers', 'bookings',
-        'room_allotments', 'room_types', 'package_periods', 'packages', 'flights', 'hotels', 'destinations', 'insurances',
+        'flight_package', 'room_allotments', 'room_types', 'package_periods', 'packages', 'flights', 'hotels', 'destinations', 'insurances',
     ];
 
     public function handle(): int

@@ -52,7 +52,7 @@ abstract class AdminTestCase extends TestCase
             'items' => [[
                 'package_id' => $package->id,
                 'mode' => 'flight_hotel',
-                'flight_id' => $package->flights()->firstOrFail()->id,
+                'flight_id' => $package->bookableFlights()->firstOrFail()->id,
                 'rooms' => [['room_type_id' => $package->hotel->roomTypes()->firstOrFail()->id, 'passengers' => [0, 1]]],
             ]],
             'insurance_ids' => [Insurance::firstOrFail()->id],

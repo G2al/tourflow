@@ -19,7 +19,10 @@ class CatalogApiTest extends ApiTestCase
             ->assertOk()
             ->assertJsonCount(7, 'data')
             ->assertJsonPath('data.0.title', 'Hurghada All Inclusive')
-            ->assertJsonPath('data.0.type', 'Soggiorno')
+            ->assertJsonPath('data.0.type', 'Solo soggiorno')
+            ->assertJsonPath('data.0.typeKey', 'hotel_only')
+            ->assertJsonPath('data.0.flightOptional', true)
+            ->assertJsonPath('data.0.flightIncluded', false)
             // 70 € a notte × 7 notti consigliate
             ->assertJsonPath('data.0.price', 490)
             ->assertJsonPath('data.0.pricePerNight', 70)
@@ -56,6 +59,30 @@ class CatalogApiTest extends ApiTestCase
         $this->assertEquals(70, $data['periods'][0]['adultPrice']);
     }
 
+    public function test_full_package_includes_the_cheapest_flight_in_the_starting_price(): void
+    {
+        $this->getJson('/api/v1/packages/sharm-el-sheikh-resort-spa')
+            ->assertOk()
+            ->assertJsonPath('data.type', 'Pacchetto completo')
+            ->assertJsonPath('data.flightIncluded', true)
+            ->assertJsonPath('data.transferIncluded', true)
+            ->assertJsonPath('data.bookingModes', ['flight_hotel'])
+            // 84 € × 7 notti + volo più economico (Bari, 300 €)
+            ->assertJsonPath('data.price', 888)
+            ->assertJsonCount(32, 'data.flights');
+    }
+
+    public function test_only_flights_linked_to_the_package_are_offered(): void
+    {
+        $package = Package::where('slug', 'hurghada-all-inclusive')->firstOrFail();
+        $kept = $package->flights()->where('departure_airport', 'NAP')->pluck('flights.id');
+        $package->flights()->sync($kept);
+
+        $this->getJson('/api/v1/packages/hurghada-all-inclusive')
+            ->assertJsonCount(8, 'data.flights')
+            ->assertJsonPath('data.flights.*.departureAirport', array_fill(0, 8, 'NAP'));
+    }
+
     public function test_excursions_and_transfers_are_standalone_products(): void
     {
         $this->getJson('/api/v1/packages/orange-bay-in-barca')
@@ -78,7 +105,10 @@ class CatalogApiTest extends ApiTestCase
         $count = fn (string $query) => count($this->getJson("/api/v1/packages?{$query}")->assertOk()->json('data'));
 
         $this->assertSame(2, $count('type=Escursione'));
-        $this->assertSame(3, $count('type=Soggiorno'));
+        $this->assertSame(3, $count('type=Soggiorno')); // tutte le offerte con hotel
+        $this->assertSame(2, $count('type='.urlencode('Solo soggiorno')));
+        $this->assertSame(1, $count('type=full_package'));
+        $this->assertSame(2, $count('airport=NAP')); // Hurghada (volo facoltativo) e Sharm (pacchetto completo)
         $this->assertSame(4, $count('destination=hurghada'));
         $this->assertSame(4, $count('days=1'));
         $this->assertSame(2, $count('board='.urlencode('All Inclusive')));
@@ -105,7 +135,8 @@ class CatalogApiTest extends ApiTestCase
     {
         $this->getJson('/api/v1/packages/filters')
             ->assertOk()
-            ->assertJsonPath('data.types', ['Soggiorno', 'Transfer', 'Escursione']);
+            ->assertJsonPath('data.types.*.label', ['Solo soggiorno', 'Pacchetto completo', 'Transfer', 'Escursione'])
+            ->assertJsonPath('data.airports.*.code', ['NAP', 'FCO', 'MXP', 'BRI']);
 
         $this->getJson('/api/v1/insurances')
             ->assertOk()

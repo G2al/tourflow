@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Enums\BookingMode;
+use App\Enums\PackageOffer;
 use App\Http\Resources\Concerns\ExposesPrices;
 use App\Models\Package;
 use App\Support\Media;
@@ -31,7 +32,7 @@ class PackageCardResource extends JsonResource
             'country' => $this->destination->country,
             'location' => $this->location ?? $this->destination->name,
             'image' => Media::url($this->cover_image),
-            'type' => $this->type->getLabel(),
+            'type' => $this->offer->getLabel(),
             'price' => $price,
             'days' => $this->days(),
             'nights' => $this->nights,
@@ -50,7 +51,11 @@ class PackageCardResource extends JsonResource
 
             // Aggiunte del backend
             'id' => $this->id,
-            'typeKey' => $this->type->value,
+            'typeKey' => $this->offer->value,
+            'category' => $this->type->value,
+            'flightIncluded' => $this->offer->includesFlight(),
+            'flightOptional' => $this->offer === PackageOffer::HotelOnly && $this->flight_hotel_enabled,
+            'transferIncluded' => $this->isStay() && $this->transfer_included,
             'priceUnit' => $this->price_unit->value,
             'pricePerNight' => $this->isStay() ? $this->lowestBasePrice() : null,
             'currency' => 'EUR',

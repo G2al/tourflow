@@ -180,7 +180,8 @@ class CartPricer
         }
 
         if ($mode === BookingMode::FlightHotel) {
-            $flight = Flight::query()->bookable()->whereKey($data['flight_id'] ?? 0)->where('destination_id', $package->destination_id)->first()
+            /** @var Flight|null $flight */
+            $flight = $package->bookableFlights()->whereKey($data['flight_id'] ?? 0)->first()
                 ?? throw ValidationException::withMessages(["{$key}.flight_id" => 'Volo non disponibile per questo pacchetto.']);
             $checkIn = CarbonImmutable::parse($flight->outbound_date);
             $checkOut = CarbonImmutable::parse($flight->return_date);

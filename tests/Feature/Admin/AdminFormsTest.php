@@ -3,8 +3,9 @@
 namespace Tests\Feature\Admin;
 
 use App\Enums\BookingAction;
+use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
-use App\Enums\PriceUnit;
+use App\Enums\PackageOffer;
 use App\Filament\Pages\Settings;
 use App\Filament\Resources\Bookings\Pages\ViewBooking;
 use App\Filament\Resources\Flights\Pages\CreateFlight;
@@ -31,21 +32,19 @@ class AdminFormsTest extends AdminTestCase
         $this->actingAs($this->admin());
     }
 
-    public function test_admin_can_create_a_stay_sold_as_hotel_only_and_flight_hotel(): void
+    public function test_admin_can_create_a_hotel_only_stay_with_optional_flight(): void
     {
         $destination = Destination::where('name', 'Marsa Alam')->firstOrFail();
 
         Livewire::test(CreatePackage::class)
             ->fillForm([
-                'type' => 'stay',
-                'price_unit' => 'per_person',
+                'offer' => 'hotel_only',
                 'destination_id' => $destination->id,
                 'hotel_id' => $destination->hotels()->value('id'),
                 'title' => 'Marsa Alam Capodanno',
                 'location' => 'Port Ghalib · Marsa Alam',
                 'nights' => 7,
                 'min_nights' => 4,
-                'hotel_only_enabled' => true,
                 'flight_hotel_enabled' => true,
                 'board' => 'All Inclusive',
                 'valid_from' => '2026-12-20',
@@ -63,16 +62,51 @@ class AdminFormsTest extends AdminTestCase
         $this->assertSame('marsa-alam-capodanno', $package->slug);
         $this->assertSame(4, $package->min_nights);
         $this->assertTrue($package->flight_hotel_enabled);
+        $this->assertTrue($package->hotel_only_enabled);
         $this->assertSame(['Capodanno sul mare'], $package->highlights);
         $this->assertEquals(150, $package->periods->first()->adult_price);
         $this->assertEquals(1050, $package->startingPrice());
+    }
+
+    public function test_full_package_requires_flights_and_includes_transfers(): void
+    {
+        $destination = Destination::where('name', 'Hurghada')->firstOrFail();
+        $flights = $destination->flights()->where('departure_airport', 'NAP')->pluck('id')->all();
+        $form = [
+            'offer' => 'full_package',
+            'destination_id' => $destination->id,
+            'hotel_id' => $destination->hotels()->value('id'),
+            'title' => 'Hurghada tutto incluso',
+            'transfer_included' => false,
+            'valid_from' => '2026-10-01',
+            'valid_to' => '2027-09-30',
+            'periods' => [['start_date' => '2026-10-01', 'end_date' => '2027-09-30', 'adult_price' => 80]],
+        ];
+
+        Livewire::test(CreatePackage::class)
+            ->fillForm($form)
+            ->call('create')
+            ->assertHasFormErrors(['flights' => 'required']);
+
+        Livewire::test(CreatePackage::class)
+            ->fillForm([...$form, 'flights' => $flights])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $package = Package::where('title', 'Hurghada tutto incluso')->firstOrFail();
+        $this->assertSame(PackageOffer::FullPackage, $package->offer);
+        $this->assertSame([BookingMode::FlightHotel], $package->bookingModes());
+        $this->assertTrue($package->transfer_included);
+        $this->assertCount(8, $package->flights);
+        // 80 × 7 notti + volo più economico da Napoli (290)
+        $this->assertEquals(850, $package->startingPrice());
     }
 
     public function test_stays_require_a_hotel(): void
     {
         Livewire::test(CreatePackage::class)
             ->fillForm([
-                'type' => 'stay',
+                'offer' => 'hotel_only',
                 'destination_id' => Destination::where('name', 'Marsa Alam')->value('id'),
                 'title' => 'Senza hotel',
                 'valid_from' => '2026-12-20',
@@ -89,8 +123,8 @@ class AdminFormsTest extends AdminTestCase
                 'destination_id' => Destination::where('name', 'Sharm el Sheikh')->value('id'),
                 'title' => 'Transfer privato Sharm',
             ])
-            ->fillForm(['type' => 'transfer'])
-            ->assertSchemaStateSet(['price_unit' => PriceUnit::PerService, 'nights' => 0])
+            ->fillForm(['offer' => 'transfer'])
+            ->assertSchemaStateSet(['nights' => 0])
             ->fillForm([
                 'valid_from' => '2026-10-01',
                 'valid_to' => '2027-09-30',

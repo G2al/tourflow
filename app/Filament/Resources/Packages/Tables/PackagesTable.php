@@ -2,7 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
-use App\Enums\PackageType;
+use App\Enums\PackageOffer;
 use App\Models\Package;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
@@ -39,9 +39,10 @@ class PackagesTable
                     ->sortable()
                     ->wrap()
                     ->description(fn (Package $record) => $record->location),
-                TextColumn::make('type')
-                    ->label('Tipo')
-                    ->badge(),
+                TextColumn::make('offer')
+                    ->label('Cosa vende')
+                    ->badge()
+                    ->description(fn (Package $record) => $record->offer === PackageOffer::HotelOnly && $record->flight_hotel_enabled ? 'volo facoltativo' : null),
                 TextColumn::make('destination.name')
                     ->label('Destinazione')
                     ->sortable(),
@@ -74,9 +75,9 @@ class PackagesTable
                     ->label('Pubblicato'),
             ])
             ->filters([
-                SelectFilter::make('type')
-                    ->label('Tipo')
-                    ->options(PackageType::class),
+                SelectFilter::make('offer')
+                    ->label('Cosa vende')
+                    ->options(PackageOffer::class),
                 SelectFilter::make('destination')
                     ->label('Destinazione')
                     ->relationship('destination', 'name'),

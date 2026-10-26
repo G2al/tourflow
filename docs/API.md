@@ -38,11 +38,18 @@ Tutti vedono sempre il **prezzo pieno al pubblico**. L'agenzia ha una **fee %** 
 
 ### Prodotti
 
-| `type` | Come si prenota (`bookingModes`) | Prezzo |
-|---|---|---|
-| `Soggiorno` | `hotel_only`: solo soggiorno con date libere<br>`flight_hotel`: volo + hotel su un volo a date fisse | a persona **a notte**, per camera |
-| `Escursione` | `excursion`: in una data | a persona |
-| `Transfer` | `transfer`: in una data | a servizio (prezzo unico per il gruppo) |
+Ogni prodotto ha un'**offerta**, cioè cosa si sta vendendo:
+
+| `type` (etichetta) | `typeKey` | Cosa include | Come si prenota (`bookingModes`) | Prezzo |
+|---|---|---|---|---|
+| `Solo soggiorno` | `hotel_only` | hotel con date libere. Se `flightOptional` è `true`, il volo si può aggiungere | `["hotel_only"]` oppure `["hotel_only", "flight_hotel"]` | a persona **a notte** |
+| `Volo + hotel` | `flight_hotel` | hotel + volo obbligatorio; le notti sono quelle del volo | `["flight_hotel"]` | hotel a notte + volo |
+| `Pacchetto completo` | `full_package` | volo + hotel + transfer inclusi | `["flight_hotel"]` | hotel a notte + volo |
+| `Transfer` | `transfer` | trasferimento in una data | `["transfer"]` | a servizio (unico per il gruppo) |
+| `Escursione` | `excursion` | escursione in una data | `["excursion"]` | a persona |
+
+- **Voli:** ogni pacchetto con volo ha i **suoi voli abbinati**, scelti dal tour operator. Nel dettaglio del pacchetto compaiono solo quelli (`flights`).
+- `category` (`stay` / `transfer` / `excursion`) raggruppa le offerte: tutte quelle con hotel sono `stay`.
 
 - **Camere:** fino a **4 per soggiorno**, ognuna con tipologia (Standard, Deluxe vista mare…) e fino a **4 occupanti**.
 - **Età** (alla data del servizio): infant **0–1**, bambino **2–17**, adulto **18+**. Le date di nascita sono sempre obbligatorie.
@@ -160,7 +167,7 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
       "country": "Egitto",
       "location": "Hurghada · Mar Rosso",
       "image": "https://.../storage/packages/hurghada.jpg",
-      "type": "Soggiorno",
+      "type": "Solo soggiorno",
       "price": 490,
       "days": 8,
       "nights": 7,
@@ -178,7 +185,11 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
       "itinerary": [{ "day": "Giorno 1", "title": "Benvenuti a Hurghada", "description": "..." }],
 
       "id": 1,
-      "typeKey": "stay",
+      "typeKey": "hotel_only",
+      "category": "stay",
+      "flightIncluded": false,
+      "flightOptional": true,
+      "transferIncluded": false,
       "priceUnit": "per_person",
       "pricePerNight": 70,
       "currency": "EUR",
@@ -200,7 +211,12 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
 
 | Campo | Note |
 |---|---|
-| `price` | Prezzo "a partire da", a persona. Per i soggiorni è `pricePerNight × nights`, dove `nights` sono le notti consigliate. Per escursioni e transfer è il prezzo del servizio. Vale `null` se non ci sono tariffe. |
+| `type`, `typeKey` | Offerta: `Solo soggiorno`/`hotel_only`, `Volo + hotel`/`flight_hotel`, `Pacchetto completo`/`full_package`, `Transfer`/`transfer`, `Escursione`/`excursion`. |
+| `category` | `stay` (tutte le offerte con hotel), `transfer`, `excursion`. |
+| `flightIncluded` | `true` per volo + hotel e pacchetto completo: il volo è obbligatorio. |
+| `flightOptional` | `true` se un "Solo soggiorno" permette di aggiungere un volo. |
+| `transferIncluded` | Trasferimenti compresi (sempre `true` nel pacchetto completo). |
+| `price` | Prezzo "a partire da", a persona:<br>- soggiorni: `pricePerNight × nights` (notti consigliate);<br>- volo + hotel e pacchetto completo: in più il **volo abbinato più economico**;<br>- escursioni e transfer: il prezzo del servizio.<br>Vale `null` se non ci sono tariffe, o se mancano voli prenotabili per un'offerta con volo. |
 | `pricePerNight` | Solo per i soggiorni: la quota a notte più bassa. |
 | `agencyFee` | **Presente solo con il token di un'agenzia**: percentuale, importo della fee sul `price` e netto. |
 | `bookingModes` | Modalità di prenotazione disponibili per il prodotto. |
@@ -214,7 +230,8 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
 |---|---|---|
 | `search` | `luxor` | titolo, località, descrizione, destinazione, paese, hotel |
 | `destination` | `hurghada` | slug o nome |
-| `type` | `Escursione` | anche `stay`, `transfer`, `excursion` |
+| `type` | `Pacchetto completo` | etichetta o chiave dell'offerta (`full_package`); `Soggiorno` comprende tutte le offerte con hotel |
+| `airport` | `NAP` | solo pacchetti con voli abbinati da quell'aeroporto (`NAP`, `FCO`, `MXP`, `BRI`) |
 | `days`, `min_days`, `max_days` | `8` | durata in giorni (notti + 1) |
 | `departure` | `Aeroporto di Hurghada` | punto d'incontro (valore da `/packages/filters`) |
 | `board` | `All Inclusive` | trattamento (valore da `/packages/filters`) |
@@ -226,7 +243,21 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
 
 ### `GET /packages/filters`
 
-Restituisce le opzioni per i filtri: `destinations`, `types`, `departures`, `boards`, `days`, `priceRange`.
+Restituisce le opzioni per i filtri:
+
+```json
+{
+  "data": {
+    "destinations": [{ "name": "Hurghada", "slug": "hurghada", "country": "Egitto" }],
+    "types": [{ "key": "hotel_only", "label": "Solo soggiorno" }, { "key": "full_package", "label": "Pacchetto completo" }],
+    "airports": [{ "code": "NAP", "city": "Napoli" }, { "code": "FCO", "city": "Roma" }],
+    "departures": ["Aeroporto di Hurghada"],
+    "boards": ["All Inclusive"],
+    "days": [1, 8],
+    "priceRange": { "min": 30, "max": 888 }
+  }
+}
+```
 
 ### `GET /packages/{slug}`: dettaglio
 
@@ -264,7 +295,7 @@ Contiene tutti i campi dell'elenco, più i seguenti:
 ```
 
 - **`hotel.roomTypes`:** le tipologie selezionabili. `supplementPerNight` è a persona a notte (infant esclusi).
-- **`flights`:** solo per i soggiorni vendibili come volo + hotel. Sono i voli futuri della destinazione, con prezzi A/R a persona e posti liberi. Aeroporti: `NAP` Napoli, `FCO` Roma, `MXP` Milano, `BRI` Bari.
+- **`flights`:** i **voli abbinati al pacchetto** ancora prenotabili, con prezzi A/R a persona e posti liberi. Ci sono per volo + hotel, pacchetto completo e solo soggiorno con volo facoltativo; per gli altri è un array vuoto. Aeroporti: `NAP` Napoli, `FCO` Roma, `MXP` Milano, `BRI` Bari.
 - **`periods`:**
   - soggiorni: prezzi **a persona a notte**;
   - escursioni: a persona;

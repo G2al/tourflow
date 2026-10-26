@@ -3,19 +3,20 @@
 namespace Database\Seeders;
 
 use App\Enums\InsuranceType;
-use App\Enums\PackageType;
-use App\Enums\PriceUnit;
+use App\Enums\PackageOffer;
 use App\Models\Destination;
 use App\Models\Hotel;
 use App\Models\Insurance;
 use App\Models\Package;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 
 /**
- * Catalogo dimostrativo in Egitto: soggiorni (solo soggiorno e volo + hotel),
- * escursioni e transfer, con tipologie di camera, allotment, voli e
- * assicurazioni. Nomi di hotel e strutture di fantasia. Non crea utenti.
+ * Catalogo dimostrativo in Egitto: solo soggiorno (anche con volo
+ * facoltativo), pacchetto completo, escursioni e transfer, con tipologie di
+ * camera, allotment, voli e assicurazioni. Nomi di hotel e strutture di
+ * fantasia. Non crea utenti.
  */
 class DemoCatalogSeeder extends Seeder
 {
@@ -37,9 +38,7 @@ class DemoCatalogSeeder extends Seeder
 
             $hotels->each(fn (Hotel $hotel) => $this->seedRoomTypes($hotel));
 
-            if ($data['flights']) {
-                $this->seedFlights($destination, $data['flights']['base_price']);
-            }
+            $flights = $data['flights'] ? $this->seedFlights($destination, $data['flights']['base_price']) : collect();
 
             foreach ($data['packages'] as $packageData) {
                 $periods = $packageData['periods'];
@@ -56,6 +55,10 @@ class DemoCatalogSeeder extends Seeder
                 ]);
 
                 $package->periods()->createMany($periods);
+
+                if ($package->flight_hotel_enabled) {
+                    $package->flights()->sync($flights->pluck('id'));
+                }
             }
         }
     }
@@ -96,16 +99,17 @@ class DemoCatalogSeeder extends Seeder
     /**
      * Voli A/R di 7 notti ogni domenica per 8 settimane, da Napoli, Roma, Milano e Bari.
      */
-    private function seedFlights(Destination $destination, float $basePrice): void
+    private function seedFlights(Destination $destination, float $basePrice): Collection
     {
         $firstSunday = today()->addWeek()->next(CarbonInterface::SUNDAY);
         $airportPrice = ['NAP' => 0, 'FCO' => 10, 'MXP' => 20, 'BRI' => -10];
+        $flights = collect();
 
         for ($week = 0; $week < 8; $week++) {
             $outbound = $firstSunday->copy()->addWeeks($week);
 
             foreach ($airportPrice as $airport => $delta) {
-                $destination->flights()->create([
+                $flights[] = $destination->flights()->create([
                     'departure_airport' => $airport,
                     'outbound_date' => $outbound,
                     'return_date' => $outbound->copy()->addDays(7),
@@ -119,6 +123,8 @@ class DemoCatalogSeeder extends Seeder
                 ]);
             }
         }
+
+        return $flights;
     }
 
     /**
@@ -187,8 +193,8 @@ class DemoCatalogSeeder extends Seeder
                 'flights' => ['base_price' => 290],
                 'packages' => [
                     [
-                        'type' => PackageType::Stay,
-                        'price_unit' => PriceUnit::PerPerson,
+                        // Solo soggiorno con volo facoltativo.
+                        'offer' => PackageOffer::HotelOnly,
                         'hotel' => 'Red Sea Paradise Resort',
                         'title' => 'Hurghada All Inclusive',
                         'slug' => 'hurghada-all-inclusive',
@@ -221,8 +227,7 @@ class DemoCatalogSeeder extends Seeder
                         'periods' => $this->seasons(70),
                     ],
                     [
-                        'type' => PackageType::Excursion,
-                        'price_unit' => PriceUnit::PerPerson,
+                        'offer' => PackageOffer::Excursion,
                         'title' => 'Orange Bay in barca',
                         'slug' => 'orange-bay-in-barca',
                         'location' => 'Giftun Island · Hurghada',
@@ -247,8 +252,7 @@ class DemoCatalogSeeder extends Seeder
                         'periods' => $this->seasons(45),
                     ],
                     [
-                        'type' => PackageType::Excursion,
-                        'price_unit' => PriceUnit::PerPerson,
+                        'offer' => PackageOffer::Excursion,
                         'title' => 'Luxor in giornata',
                         'slug' => 'luxor-in-giornata',
                         'location' => 'Luxor · Valle del Nilo',
@@ -273,8 +277,7 @@ class DemoCatalogSeeder extends Seeder
                         'periods' => $this->seasons(95),
                     ],
                     [
-                        'type' => PackageType::Transfer,
-                        'price_unit' => PriceUnit::PerService,
+                        'offer' => PackageOffer::Transfer,
                         'title' => 'Transfer privato aeroporto di Hurghada',
                         'slug' => 'transfer-privato-aeroporto-hurghada',
                         'location' => 'Hurghada',
@@ -314,8 +317,8 @@ class DemoCatalogSeeder extends Seeder
                 'flights' => ['base_price' => 310],
                 'packages' => [
                     [
-                        'type' => PackageType::Stay,
-                        'price_unit' => PriceUnit::PerPerson,
+                        // Pacchetto completo: volo + hotel + transfer.
+                        'offer' => PackageOffer::FullPackage,
                         'hotel' => 'Coral Garden Resort & Spa',
                         'title' => 'Sharm el Sheikh Resort & Spa',
                         'slug' => 'sharm-el-sheikh-resort-spa',
@@ -365,8 +368,7 @@ class DemoCatalogSeeder extends Seeder
                 'flights' => null,
                 'packages' => [
                     [
-                        'type' => PackageType::Stay,
-                        'price_unit' => PriceUnit::PerPerson,
+                        'offer' => PackageOffer::HotelOnly,
                         'hotel' => 'Dolphin Bay Resort',
                         'title' => 'Marsa Alam Family',
                         'slug' => 'marsa-alam-family',
@@ -389,8 +391,7 @@ class DemoCatalogSeeder extends Seeder
                         'periods' => $this->seasons(74),
                     ],
                     [
-                        'type' => PackageType::Transfer,
-                        'price_unit' => PriceUnit::PerService,
+                        'offer' => PackageOffer::Transfer,
                         'title' => 'Transfer privato aeroporto di Marsa Alam',
                         'slug' => 'transfer-privato-aeroporto-marsa-alam',
                         'location' => 'Marsa Alam',

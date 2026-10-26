@@ -21,7 +21,7 @@ class PackageResource extends PackageCardResource
             ...parent::toArray($request),
             'gallery' => Media::urls($this->gallery),
             'hotel' => $this->hotel ? new HotelResource($this->hotel) : null,
-            'flights' => $this->flight_hotel_enabled ? FlightResource::collection($this->flights) : [],
+            'flights' => $this->flight_hotel_enabled ? FlightResource::collection($this->bookableFlights) : [],
             'transfer' => [
                 'included' => $this->transfer_included,
                 'price' => $this->transfer_included || $this->transfer_price === null ? null : (float) $this->transfer_price,

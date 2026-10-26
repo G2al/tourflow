@@ -87,6 +87,35 @@ class BookingApiTest extends ApiTestCase
         $this->assertEquals(980 + 580 + 30, $data['totals']['total']);
     }
 
+    public function test_full_package_must_be_booked_with_one_of_its_flights(): void
+    {
+        $sharm = Package::where('slug', 'sharm-el-sheikh-resort-spa')->firstOrFail();
+        $room = $sharm->hotel->roomTypes()->where('name', 'Standard')->firstOrFail();
+        $passengers = array_slice($this->family(), 0, 2);
+
+        // Senza volo non si può: il pacchetto completo ha solo la modalità volo + hotel.
+        $this->postJson('/api/v1/cart/quote', [
+            'passengers' => $passengers,
+            'items' => [['package_id' => $sharm->id, 'mode' => 'hotel_only', 'check_in' => '2026-11-14', 'check_out' => '2026-11-21',
+                'rooms' => [['room_type_id' => $room->id, 'passengers' => [0, 1]]]]],
+        ])->assertUnprocessable()->assertJsonValidationErrors(['items.0.mode']);
+
+        // Un volo non abbinato al pacchetto viene rifiutato.
+        $notLinked = $sharm->flights()->firstOrFail();
+        $sharm->flights()->detach($notLinked->id);
+        $cart = [
+            'passengers' => $passengers,
+            'items' => [['package_id' => $sharm->id, 'flight_id' => $notLinked->id, 'rooms' => [['room_type_id' => $room->id, 'passengers' => [0, 1]]]]],
+        ];
+        $this->postJson('/api/v1/cart/quote', $cart)->assertUnprocessable()->assertJsonValidationErrors(['items.0.flight_id']);
+
+        // Con un volo abbinato: hotel 2 × 588 + volo 2 × prezzo; trasferimenti inclusi.
+        $flight = $sharm->flights()->firstOrFail();
+        $cart['items'][0]['flight_id'] = $flight->id;
+        $total = $this->postJson('/api/v1/cart/quote', $cart)->assertOk()->json('data.totals.total');
+        $this->assertEquals(2 * 588 + 2 * (float) $flight->adult_price, $total);
+    }
+
     public function test_cart_with_several_products(): void
     {
         $cart = $this->hotelOnlyCart(['insurance_ids' => []]);

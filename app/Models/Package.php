@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\BookingMode;
+use App\Enums\PackageOffer;
 use App\Enums\PackageType;
 use App\Enums\PriceUnit;
 use App\Models\Concerns\HasUniqueSlug;
@@ -11,6 +12,7 @@ use Carbon\CarbonPeriod;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Collection;
@@ -28,10 +30,27 @@ class Package extends Model
 
     protected static function booted(): void
     {
-        // Escursioni e transfer si svolgono in giornata.
+        // L'offerta ("cosa si vende") determina tipo, modalità e regole.
         static::saving(function (Package $package) {
-            if ($package->type !== PackageType::Stay) {
+            $offer = $package->offer ?? PackageOffer::HotelOnly;
+
+            $package->type = $offer->packageType();
+            $package->price_unit = $offer === PackageOffer::Transfer ? PriceUnit::PerService : PriceUnit::PerPerson;
+
+            // Solo soggiorno: il volo facoltativo dipende da flight_hotel_enabled.
+            $package->hotel_only_enabled = $offer === PackageOffer::HotelOnly;
+            if ($offer !== PackageOffer::HotelOnly) {
+                $package->flight_hotel_enabled = $offer->includesFlight();
+            }
+
+            if ($offer === PackageOffer::FullPackage) {
+                $package->transfer_included = true;
+            }
+
+            // Escursioni e transfer si svolgono in giornata.
+            if (! $offer->isStay()) {
                 $package->nights = 0;
+                $package->hotel_id = null;
             }
         });
     }
@@ -39,6 +58,7 @@ class Package extends Model
     protected $fillable = [
         'destination_id',
         'hotel_id',
+        'offer',
         'type',
         'price_unit',
         'title',
@@ -76,6 +96,7 @@ class Package extends Model
     protected function casts(): array
     {
         return [
+            'offer' => PackageOffer::class,
             'type' => PackageType::class,
             'price_unit' => PriceUnit::class,
             'gallery' => 'array',
@@ -117,15 +138,23 @@ class Package extends Model
     }
 
     /**
-     * Voli prenotabili per la destinazione del pacchetto (volo + hotel).
+     * Voli abbinati al pacchetto (scelti nel pannello).
      */
-    public function flights(): HasMany
+    public function flights(): BelongsToMany
     {
-        return $this->hasMany(Flight::class, 'destination_id', 'destination_id')
-            ->where('is_active', true)
-            ->whereDate('outbound_date', '>', today())
+        return $this->belongsToMany(Flight::class)
             ->orderBy('outbound_date')
             ->orderBy('departure_airport');
+    }
+
+    /**
+     * Voli abbinati ancora prenotabili (attivi, con partenza da domani).
+     */
+    public function bookableFlights(): BelongsToMany
+    {
+        return $this->flights()
+            ->where('flights.is_active', true)
+            ->whereDate('flights.outbound_date', '>', today());
     }
 
     /**
@@ -196,8 +225,9 @@ class Package extends Model
     }
 
     /**
-     * Prezzo "a partire da" mostrato nel catalogo: per i soggiorni è la quota
-     * a notte più bassa moltiplicata per le notti consigliate.
+     * Prezzo "a partire da" mostrato nel catalogo, a persona: per i soggiorni
+     * è la quota a notte più bassa per le notti consigliate, più il volo più
+     * economico quando il volo è compreso (volo + hotel, pacchetto completo).
      */
     public function startingPrice(): ?float
     {
@@ -207,7 +237,23 @@ class Package extends Model
             return null;
         }
 
-        return $this->isStay() ? round($base * max(1, $this->nights), 2) : $base;
+        if (! $this->isStay()) {
+            return $base;
+        }
+
+        $price = $base * max(1, $this->nights);
+
+        if ($this->offer?->includesFlight()) {
+            $flight = $this->bookableFlights->min('adult_price');
+
+            if ($flight === null) {
+                return null;
+            }
+
+            $price += (float) $flight;
+        }
+
+        return round($price, 2);
     }
 
     /**
