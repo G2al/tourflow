@@ -41,6 +41,7 @@ class Booking extends Model
         'price_breakdown',
         'quote_valid_until',
         'option_expires_at',
+        'option_reminders_sent',
         'confirmed_at',
         'proforma_sent_at',
         'proforma_viewed_at',
@@ -67,6 +68,7 @@ class Booking extends Model
             'deposit_percent' => 'decimal:2',
             'deposit_amount' => 'decimal:2',
             'price_breakdown' => 'array',
+            'option_reminders_sent' => 'array',
             'quote_valid_until' => 'date',
             'option_expires_at' => 'datetime',
             'confirmed_at' => 'datetime',
@@ -139,6 +141,14 @@ class Booking extends Model
     public function isOptionExpired(): bool
     {
         return $this->status === BookingStatus::Option && $this->option_expires_at?->isPast();
+    }
+
+    /**
+     * Pagina della pratica sul sito pubblico (link personale).
+     */
+    public function publicUrl(): string
+    {
+        return config('tourflow.frontend_url')."/pratica/{$this->code}?token={$this->access_token}";
     }
 
     public function contactFullName(): string

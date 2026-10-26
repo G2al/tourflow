@@ -121,7 +121,7 @@ class BookingController extends Controller
         abort_unless($allowed, 404);
 
         if ($booking->isOptionExpired()) {
-            $booking->update(['status' => BookingStatus::Expired]);
+            $this->bookings->expire($booking);
         }
     }
 }

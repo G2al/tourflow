@@ -27,7 +27,10 @@ class BookingService
         'document_type', 'document_number', 'document_expiry',
     ];
 
-    public function __construct(private CartPricer $pricer) {}
+    public function __construct(
+        private CartPricer $pricer,
+        private BookingNotifier $notifier,
+    ) {}
 
     /**
      * Prezzo del carrello senza salvare nulla.
@@ -52,7 +55,7 @@ class BookingService
             $this->assertPassengersComplete($passengers);
         }
 
-        return DB::transaction(function () use ($data, $action, $user, $agency, $ip, $passengers) {
+        $booking = DB::transaction(function () use ($data, $action, $user, $agency, $ip, $passengers) {
             $this->lockInventory($data['items']);
 
             $pricing = $this->pricer->price($data, $agency);
@@ -87,6 +90,10 @@ class BookingService
 
             return $booking;
         })->load($this->relations());
+
+        $this->notifier->bookingSaved($booking, $action);
+
+        return $booking;
     }
 
     /**
@@ -115,7 +122,7 @@ class BookingService
 
         $this->assertPassengersComplete($booking->passengers()->get()->map->only(self::PASSENGER_FIELDS)->all());
 
-        return DB::transaction(function () use ($booking, $action, $ip) {
+        $booking = DB::transaction(function () use ($booking, $action, $ip) {
             $request = $booking->price_breakdown['request'];
             $this->lockInventory($request['items']);
 
@@ -133,6 +140,10 @@ class BookingService
 
             return $booking;
         })->load($this->relations());
+
+        $this->notifier->bookingSaved($booking, $action);
+
+        return $booking;
     }
 
     /**
@@ -156,10 +167,63 @@ class BookingService
      */
     public function expireOptions(): int
     {
-        return Booking::query()
+        $expired = Booking::query()
             ->where('status', BookingStatus::Option)
             ->where('option_expires_at', '<=', now())
+            ->get();
+
+        foreach ($expired as $booking) {
+            $this->expire($booking);
+        }
+
+        return $expired->count();
+    }
+
+    /**
+     * Segna scaduta un'opzione oltre il limite e avvisa il cliente/agenzia.
+     */
+    public function expire(Booking $booking): void
+    {
+        $updated = Booking::whereKey($booking->id)
+            ->where('status', BookingStatus::Option)
             ->update(['status' => BookingStatus::Expired, 'updated_at' => now()]);
+
+        if ($updated) {
+            $booking->refresh();
+            $this->notifier->optionExpired($booking);
+        }
+    }
+
+    /**
+     * Promemoria prima della scadenza delle opzioni (config tourflow.option_reminders).
+     */
+    public function sendOptionReminders(): int
+    {
+        $sent = 0;
+        $options = Booking::query()
+            ->where('status', BookingStatus::Option)
+            ->where('option_expires_at', '>', now())
+            ->where('option_expires_at', '<=', now()->addHours(max(config('tourflow.option_reminders.agency'))))
+            ->get();
+
+        foreach ($options as $booking) {
+            $hoursLeft = now()->diffInMinutes($booking->option_expires_at) / 60;
+            $already = $booking->option_reminders_sent ?? [];
+            $due = collect(config('tourflow.option_reminders.'.($booking->isAgencyBooking() ? 'agency' : 'guest')))
+                ->filter(fn (int $hours) => $hoursLeft <= $hours && ! in_array($hours, $already, true))
+                ->sort();
+
+            if ($due->isEmpty()) {
+                continue;
+            }
+
+            // Un solo promemoria per giro: quello più vicino alla scadenza.
+            $booking->update(['option_reminders_sent' => [...$already, ...$due->values()->all()]]);
+            $this->notifier->optionReminder($booking, max(1, (int) ceil($hoursLeft)));
+            $sent++;
+        }
+
+        return $sent;
     }
 
     /**
@@ -167,9 +231,26 @@ class BookingService
      */
     public function markProformaViewed(Booking $booking): void
     {
-        if ($booking->status === BookingStatus::ProformaSent) {
-            $booking->update(['status' => BookingStatus::ProformaViewed, 'proforma_viewed_at' => now()]);
+        $updated = Booking::whereKey($booking->id)
+            ->where('status', BookingStatus::ProformaSent)
+            ->update(['status' => BookingStatus::ProformaViewed, 'proforma_viewed_at' => now(), 'updated_at' => now()]);
+
+        if ($updated) {
+            $this->notifier->proformaViewed($booking->refresh());
         }
+    }
+
+    /**
+     * Cambio di stato dal pannello (acconto, saldo, annullamento) con avviso.
+     */
+    public function changeStatus(Booking $booking, BookingStatus $status): void
+    {
+        $booking->update([
+            'status' => $status,
+            ...($status === BookingStatus::Cancelled ? ['cancelled_at' => now()] : []),
+        ]);
+
+        $this->notifier->statusChanged($booking, $status);
     }
 
     /**
@@ -195,6 +276,7 @@ class BookingService
             BookingAction::Option => [
                 'status' => BookingStatus::Option,
                 'option_expires_at' => now()->addHours(Setting::int($booking->isAgencyBooking() ? 'option_hours_agency' : 'option_hours_guest')),
+                'option_reminders_sent' => null,
             ],
             BookingAction::Confirm => $booking->isAgencyBooking()
                 ? ['status' => BookingStatus::ProformaSent, 'confirmed_at' => now(), 'proforma_sent_at' => now(), 'option_expires_at' => null]

@@ -479,6 +479,25 @@ Una pratica la può vedere:
 
 Al cliente ospite va salvato o mostrato il link `.../pratica/{code}?token={accessToken}`, così può ritrovare preventivo e opzione. Senza accesso la risposta è **404**.
 
+> **Importante:** le email inviate dal backend contengono il link `{FRONTEND_URL}/pratica/{code}?token={accessToken}`. La pagina della pratica nel frontend deve rispondere **esattamente** a questo percorso: `/pratica/[code]`, con il token in query string.
+
+### Email automatiche (inviate dal backend)
+
+Il frontend non deve inviare email: le gestisce il backend.
+
+| Evento | Cliente diretto | Agenzia (email aziendale, operatore in copia) | Tour operator |
+|---|---|---|---|
+| Registrazione agenzia | — | benvenuto con la fee | avviso |
+| Preventivo | riepilogo + PDF allegato | riepilogo + PDF allegato | — |
+| Opzione | scadenza + link | scadenza + link | avviso |
+| Promemoria opzione | 1 ora prima | 24 ore e 1 ora prima | — |
+| Opzione scaduta | avviso | avviso | — |
+| Conferma | "sarai contattato" | link alla **proforma** | avviso con i contatti |
+| Proforma aperta | — | — | avviso |
+| Acconto / saldo / annullamento (dal pannello) | avviso | avviso | — |
+
+Per le pratiche delle agenzie, il cliente finale non riceve email: è l'agenzia a gestirlo.
+
 | Rotta | Funzione |
 |---|---|
 | `GET /bookings/{code}` | Dettaglio |

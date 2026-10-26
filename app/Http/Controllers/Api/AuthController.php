@@ -9,6 +9,7 @@ use App\Http\Requests\Api\RegisterAgencyRequest;
 use App\Http\Requests\Api\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\BookingNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -23,7 +24,7 @@ class AuthController extends Controller
      * Registrazione di una nuova agenzia: crea utente + anagrafica agenzia
      * e restituisce subito il token di accesso.
      */
-    public function register(RegisterAgencyRequest $request): JsonResponse
+    public function register(RegisterAgencyRequest $request, BookingNotifier $notifier): JsonResponse
     {
         $data = $request->validated();
 
@@ -40,6 +41,8 @@ class AuthController extends Controller
 
             return $user;
         });
+
+        $notifier->agencyRegistered($user->agency);
 
         return $this->tokenResponse($user, $data['device_name'] ?? null, Response::HTTP_CREATED);
     }

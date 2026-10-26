@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Bookings\Pages;
 use App\Enums\BookingStatus;
 use App\Filament\Resources\Bookings\BookingResource;
 use App\Models\Booking;
+use App\Services\BookingService;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
@@ -62,14 +63,13 @@ class ViewBooking extends ViewRecord
             ->modalHeading("{$label}: pratica")
             ->modalDescription($status === BookingStatus::Cancelled ? 'La disponibilità di camere e voli tornerà libera.' : null)
             ->visible(fn (Booking $record) => in_array($record->status, $from, true))
-            ->action(function (Booking $record) use ($status) {
-                $record->update([
-                    'status' => $status,
-                    ...($status === BookingStatus::Cancelled ? ['cancelled_at' => now()] : []),
-                ]);
+            ->modalSubmitActionLabel('Conferma e avvisa')
+            ->action(function (Booking $record, BookingService $bookings) use ($status) {
+                $bookings->changeStatus($record, $status);
 
                 Notification::make()
                     ->title("Pratica: {$status->getLabel()}")
+                    ->body($record->isAgencyBooking() ? "Email inviata all'agenzia." : 'Email inviata al cliente.')
                     ->success()
                     ->send();
             });
