@@ -12,30 +12,22 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class PackageController extends Controller
 {
     /**
-     * Prezzo "a partire da" in SQL (stessa regola di Package::startingPrice):
-     * quota base minima tra i periodi futuri × notti consigliate nei soggiorni,
-     * più il volo abbinato più economico quando il volo è compreso.
-     * Parametri: [oggi, oggi].
-     */
-    private const STARTING_PRICE_SQL = "((select min(pp.adult_price) from package_periods pp where pp.package_id = packages.id and pp.end_date >= ?)
-        * (case when packages.type = 'stay' and packages.nights > 0 then packages.nights else 1 end)
-        + (case when packages.offer in ('flight_hotel', 'full_package') then
-            (select min(f.adult_price) from flights f join flight_package fp on fp.flight_id = f.id
-             where fp.package_id = packages.id and f.is_active = 1 and f.outbound_date > ?)
-          else 0 end))";
-
-    /**
      * Elenco pacchetti pubblicati. Filtri: destination (slug o nome), type
      * (offerta o "Soggiorno"), search, days / min_days / max_days, departure
      * (punto d'incontro), airport (volo da NAP/FCO/MXP/BRI), board, date,
      * min_price / max_price, featured.
      * Ordinamento: sort = recommended|price_asc|price_desc|duration|newest.
+     *
+     * Prezzo e durata dipendono da periodi e voli abbinati (Package::startingPrice
+     * e displayNights): filtri e ordinamenti su questi valori sono applicati
+     * sugli stessi calcoli mostrati nelle card, poi si pagina.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -63,11 +55,7 @@ class PackageController extends Controller
             throw ValidationException::withMessages(['type' => 'Tipo non valido: usare Solo soggiorno, Volo + hotel, Pacchetto completo, Transfer o Escursione.']);
         }
 
-        $today = today()->toDateString();
-
         $packages = Package::published()
-            ->select('packages.*')
-            ->selectRaw(self::STARTING_PRICE_SQL.' as starting_price', [$today, $today])
             ->with([
                 'destination',
                 'periods' => fn ($query) => $query->whereDate('end_date', '>=', today()),
@@ -80,9 +68,6 @@ class PackageController extends Controller
             ->when($request->filled('airport'), fn (Builder $query) => $query
                 ->where('flight_hotel_enabled', true)
                 ->whereHas('bookableFlights', fn ($q) => $q->where('departure_airport', $request->input('airport'))))
-            ->when($request->filled('days'), fn (Builder $query) => $query->where('nights', $request->integer('days') - 1))
-            ->when($request->filled('min_days'), fn (Builder $query) => $query->where('nights', '>=', $request->integer('min_days') - 1))
-            ->when($request->filled('max_days'), fn (Builder $query) => $query->where('nights', '<=', $request->integer('max_days') - 1))
             ->when($request->filled('departure'), fn (Builder $query) => $query->whereJsonContains('departures', $request->input('departure')))
             ->when($request->filled('board'), fn (Builder $query) => $query->where('board', $request->input('board')))
             ->when($request->filled('search'), function (Builder $query) use ($request) {
@@ -97,21 +82,37 @@ class PackageController extends Controller
             ->when($request->filled('date'), fn (Builder $query) => $query->whereHas('periods', fn ($q) => $q
                 ->whereDate('start_date', '<=', $request->input('date'))
                 ->whereDate('end_date', '>=', $request->input('date'))))
-            ->when($request->filled('max_price'), fn (Builder $query) => $query->whereRaw(self::STARTING_PRICE_SQL.' <= CAST(? AS DECIMAL(10,2))', [$today, $today, $request->input('max_price')]))
-            ->when($request->filled('min_price'), fn (Builder $query) => $query->whereRaw(self::STARTING_PRICE_SQL.' >= CAST(? AS DECIMAL(10,2))', [$today, $today, $request->input('min_price')]))
             ->when($request->boolean('featured'), fn (Builder $query) => $query->where('is_featured', true))
-            ->tap(fn (Builder $query) => match ($request->input('sort')) {
-                'price_asc' => $query->orderBy('starting_price'),
-                'price_desc' => $query->orderByDesc('starting_price'),
-                'duration' => $query->orderBy('nights')->orderBy('starting_price'),
-                'newest' => $query->latest(),
-                // "recommended" e "rating" (recensioni non gestite): ordine scelto dall'admin.
-                default => $query->orderByDesc('is_featured')->orderBy('sort_order')->latest(),
-            })
-            ->paginate($request->integer('per_page', 12))
-            ->withQueryString();
+            // "recommended" e "rating" (recensioni non gestite): ordine scelto dall'admin.
+            ->orderByDesc('is_featured')->orderBy('sort_order')->latest()
+            ->get();
 
-        return PackageCardResource::collection($packages);
+        $price = fn (Package $package) => $package->startingPrice();
+        $packages = $packages
+            ->when($request->filled('days'), fn ($c) => $c->filter(fn (Package $p) => $p->days() === $request->integer('days')))
+            ->when($request->filled('min_days'), fn ($c) => $c->filter(fn (Package $p) => $p->days() >= $request->integer('min_days')))
+            ->when($request->filled('max_days'), fn ($c) => $c->filter(fn (Package $p) => $p->days() <= $request->integer('max_days')))
+            ->when($request->filled('min_price'), fn ($c) => $c->filter(fn (Package $p) => $price($p) !== null && $price($p) >= (float) $request->input('min_price')))
+            ->when($request->filled('max_price'), fn ($c) => $c->filter(fn (Package $p) => $price($p) !== null && $price($p) <= (float) $request->input('max_price')));
+
+        $packages = match ($request->input('sort')) {
+            'price_asc' => $packages->sortBy(fn (Package $p) => $price($p) ?? PHP_FLOAT_MAX),
+            'price_desc' => $packages->sortByDesc(fn (Package $p) => $price($p) ?? -1),
+            'duration' => $packages->sortBy(fn (Package $p) => [$p->days(), $price($p) ?? PHP_FLOAT_MAX]),
+            'newest' => $packages->sortByDesc('created_at'),
+            default => $packages,
+        };
+
+        $perPage = $request->integer('per_page', 12);
+        $page = LengthAwarePaginator::resolveCurrentPage();
+
+        return PackageCardResource::collection(new LengthAwarePaginator(
+            $packages->values()->forPage($page, $perPage)->values(),
+            $packages->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()],
+        ));
     }
 
     /**

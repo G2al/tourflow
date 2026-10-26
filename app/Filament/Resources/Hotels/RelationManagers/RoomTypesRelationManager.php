@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Hotels\RelationManagers;
 
+use App\Filament\Support\HelpAction;
 use App\Filament\Support\PriceFields;
 use App\Models\RoomType;
 use App\Services\Inventory;
@@ -124,6 +125,7 @@ class RoomTypesRelationManager extends RelationManager
                     ->label('Attiva'),
             ])
             ->headerActions([
+                HelpAction::make('rooms', 'Camere e disponibilità'),
                 CreateAction::make(),
             ])
             ->recordActions([

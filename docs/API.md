@@ -168,9 +168,9 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
       "location": "Hurghada · Mar Rosso",
       "image": "https://.../storage/packages/hurghada.jpg",
       "type": "Solo soggiorno",
-      "price": 490,
-      "days": 8,
-      "nights": 7,
+      "price": 70,
+      "days": 4,
+      "nights": 3,
       "period": "Tutto l'anno",
       "months": ["Gennaio", "...", "Dicembre"],
       "departures": ["Aeroporto di Hurghada"],
@@ -190,10 +190,11 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
       "flightIncluded": false,
       "flightOptional": true,
       "transferIncluded": false,
+      "priceBasis": "per_night",
       "priceUnit": "per_person",
       "pricePerNight": 70,
       "currency": "EUR",
-      "agencyFee": { "percent": 10, "amount": 49, "netPrice": 441 },
+      "agencyFee": { "percent": 10, "amount": 7, "netPrice": 63 },
       "bookingModes": ["hotel_only", "flight_hotel"],
       "minNights": 3,
       "featured": true,
@@ -216,11 +217,14 @@ Ogni elemento rispetta il contratto `TravelPackage` del frontend, con in più al
 | `flightIncluded` | `true` per volo + hotel e pacchetto completo: il volo è obbligatorio. |
 | `flightOptional` | `true` se un "Solo soggiorno" permette di aggiungere un volo. |
 | `transferIncluded` | Trasferimenti compresi (sempre `true` nel pacchetto completo). |
-| `price` | Prezzo "a partire da", a persona:<br>- soggiorni: `pricePerNight × nights` (notti consigliate);<br>- volo + hotel e pacchetto completo: in più il **volo abbinato più economico**;<br>- escursioni e transfer: il prezzo del servizio.<br>Vale `null` se non ci sono tariffe, o se mancano voli prenotabili per un'offerta con volo. |
+| `price` + `priceBasis` | Prezzo "a partire da". `priceBasis` dice su cosa è calcolato:<br>- `per_night` (solo soggiorno): quota **a persona a notte** più bassa → "da 70 € a notte";<br>- `per_person` (volo + hotel, pacchetto completo): hotel per le notti del volo + volo, sulla combinazione più conveniente → "da 888 € a persona"; per le escursioni, il prezzo a persona;<br>- `per_service` (transfer): prezzo per tutto il gruppo.<br>Vale `null` se non ci sono tariffe, o se mancano voli per un'offerta con volo. |
+| `nights`, `days` | Volo + hotel e pacchetto completo: notti del volo più conveniente. Solo soggiorno: il **soggiorno minimo** (1 = nessun minimo, il cliente sceglie le date). Escursioni e transfer: 0 notti, 1 giorno. |
 | `pricePerNight` | Solo per i soggiorni: la quota a notte più bassa. |
 | `agencyFee` | **Presente solo con il token di un'agenzia**: percentuale, importo della fee sul `price` e netto. |
 | `bookingModes` | Modalità di prenotazione disponibili per il prodotto. |
-| `minNights` | Soggiorno minimo per il "solo soggiorno". |
+| `minNights` | Soggiorno minimo per il "solo soggiorno" (1 = nessun minimo). |
+| `location` | Coincide con la destinazione (il campo località non si gestisce più nel pannello; i vecchi pacchetti possono ancora averne uno). |
+| `period` | Sempre calcolato dalle stagioni di prezzo ("Tutto l'anno", "Novembre - Aprile"). |
 | `badge`, `board`, `stay` | Possono valere `null`: in quel caso si nascondono. |
 | `rating`, `reviews` | **Non forniti.** |
 

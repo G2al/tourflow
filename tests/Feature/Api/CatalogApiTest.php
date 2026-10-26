@@ -23,9 +23,12 @@ class CatalogApiTest extends ApiTestCase
             ->assertJsonPath('data.0.typeKey', 'hotel_only')
             ->assertJsonPath('data.0.flightOptional', true)
             ->assertJsonPath('data.0.flightIncluded', false)
-            // 70 € a notte × 7 notti consigliate
-            ->assertJsonPath('data.0.price', 490)
+            // Solo soggiorno: prezzo a persona a notte, notti = soggiorno minimo (3)
+            ->assertJsonPath('data.0.price', 70)
+            ->assertJsonPath('data.0.priceBasis', 'per_night')
             ->assertJsonPath('data.0.pricePerNight', 70)
+            ->assertJsonPath('data.0.nights', 3)
+            ->assertJsonPath('data.0.days', 4)
             ->assertJsonPath('data.0.bookingModes', ['hotel_only', 'flight_hotel'])
             ->assertJsonMissingPath('data.0.agencyFee');
     }
@@ -35,8 +38,8 @@ class CatalogApiTest extends ApiTestCase
         $this->withToken($this->agencyToken())
             ->getJson('/api/v1/packages/hurghada-all-inclusive')
             ->assertOk()
-            ->assertJsonPath('data.price', 490)
-            ->assertJsonPath('data.agencyFee', ['percent' => 10, 'amount' => 49, 'netPrice' => 441]);
+            ->assertJsonPath('data.price', 70)
+            ->assertJsonPath('data.agencyFee', ['percent' => 10, 'amount' => 7, 'netPrice' => 63]);
     }
 
     public function test_package_detail_matches_the_frontend_contract_and_exposes_booking_data(): void
@@ -69,6 +72,8 @@ class CatalogApiTest extends ApiTestCase
             ->assertJsonPath('data.bookingModes', ['flight_hotel'])
             // 84 € × 7 notti + volo più economico (Bari, 300 €)
             ->assertJsonPath('data.price', 888)
+            ->assertJsonPath('data.priceBasis', 'per_person')
+            ->assertJsonPath('data.nights', 7)
             ->assertJsonCount(32, 'data.flights');
     }
 

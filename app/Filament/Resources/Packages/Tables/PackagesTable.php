@@ -27,7 +27,7 @@ class PackagesTable
     public static function configure(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn (Builder $query) => $query->with('periods'))
+            ->modifyQueryUsing(fn (Builder $query) => $query->with(['periods', 'bookableFlights']))
             ->defaultSort('created_at', 'desc')
             ->columns([
                 ImageColumn::make('cover_image')
@@ -37,17 +37,13 @@ class PackagesTable
                     ->label('Pacchetto')
                     ->searchable()
                     ->sortable()
-                    ->wrap()
-                    ->description(fn (Package $record) => $record->location),
+                    ->wrap(),
                 TextColumn::make('offer')
                     ->label('Cosa vende')
                     ->badge()
                     ->description(fn (Package $record) => $record->offer === PackageOffer::HotelOnly && $record->flight_hotel_enabled ? 'volo facoltativo' : null),
                 TextColumn::make('destination.name')
                     ->label('Destinazione')
-                    ->sortable(),
-                TextColumn::make('nights')
-                    ->label('Notti')
                     ->sortable(),
                 TextColumn::make('board')
                     ->label('Trattamento')
@@ -61,8 +57,12 @@ class PackagesTable
                     ->label('A partire da')
                     ->state(fn (Package $record) => $record->startingPrice())
                     ->money('EUR')
-                    ->description(fn (Package $record) => $record->price_unit->getLabel())
-                    ->placeholder('Nessun periodo'),
+                    ->description(fn (Package $record) => match ($record->priceBasis()) {
+                        'per_night' => 'a persona a notte',
+                        'per_service' => 'a servizio',
+                        default => $record->offer->includesFlight() ? "a persona, {$record->displayNights()} notti con volo" : 'a persona',
+                    })
+                    ->placeholder('Prezzi o voli mancanti'),
                 TextColumn::make('badge')
                     ->label('Badge')
                     ->badge()

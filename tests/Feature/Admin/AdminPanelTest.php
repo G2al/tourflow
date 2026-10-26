@@ -82,6 +82,13 @@ class AdminPanelTest extends AdminTestCase
         $this->assertNull($booking->fresh()->proforma_viewed_at);
     }
 
+    public function test_help_tutorials_render(): void
+    {
+        foreach (['offer', 'content', 'prices', 'flights', 'fees', 'rooms'] as $topic) {
+            $this->assertStringContainsString('tf-help', view("filament.help.{$topic}")->render(), $topic);
+        }
+    }
+
     public function test_documents_are_admin_only(): void
     {
         $booking = $this->createBooking();

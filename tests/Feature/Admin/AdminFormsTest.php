@@ -12,6 +12,7 @@ use App\Filament\Resources\Flights\Pages\CreateFlight;
 use App\Filament\Resources\Hotels\Pages\EditHotel;
 use App\Filament\Resources\Hotels\RelationManagers\RoomTypesRelationManager;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
+use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Models\Destination;
 use App\Models\Flight;
@@ -65,7 +66,55 @@ class AdminFormsTest extends AdminTestCase
         $this->assertTrue($package->hotel_only_enabled);
         $this->assertSame(['Capodanno sul mare'], $package->highlights);
         $this->assertEquals(150, $package->periods->first()->adult_price);
-        $this->assertEquals(1050, $package->startingPrice());
+        // Solo soggiorno: prezzo "a partire da" a notte.
+        $this->assertEquals(150, $package->startingPrice());
+        $this->assertSame('per_night', $package->priceBasis());
+    }
+
+    public function test_title_is_generated_but_can_be_edited(): void
+    {
+        $destination = Destination::where('name', 'Marsa Alam')->firstOrFail();
+        $hotel = $destination->hotels()->firstOrFail();
+        $base = [
+            'valid_from' => '2026-12-20',
+            'valid_to' => '2027-01-10',
+            'periods' => [['start_date' => '2026-12-20', 'end_date' => '2027-01-10', 'adult_price' => 100]],
+        ];
+
+        Livewire::test(CreatePackage::class)
+            ->fillForm(['offer' => 'hotel_only'])
+            ->fillForm(['destination_id' => $destination->id])
+            ->fillForm(['hotel_id' => $hotel->id])
+            ->assertSchemaStateSet(['title' => "Soggiorno a Marsa Alam · {$hotel->name}"])
+            ->fillForm($base)
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        // Un titolo scritto a mano non viene sovrascritto cambiando l'offerta.
+        Livewire::test(CreatePackage::class)
+            ->fillForm(['offer' => 'excursion', 'destination_id' => $destination->id])
+            ->fillForm(['title' => 'Snorkeling con i delfini'])
+            ->fillForm(['offer' => 'transfer'])
+            ->assertSchemaStateSet(['title' => 'Snorkeling con i delfini']);
+    }
+
+    public function test_registration_fee_is_applied_only_when_enabled(): void
+    {
+        $package = Package::where('slug', 'marsa-alam-family')->firstOrFail();
+
+        Livewire::test(EditPackage::class, ['record' => $package->id])
+            ->assertSchemaStateSet(['has_registration_fee' => false])
+            ->fillForm(['has_registration_fee' => true, 'registration_fee' => 40])
+            ->call('save')
+            ->assertHasNoFormErrors();
+        $this->assertEquals(40, $package->fresh()->registration_fee);
+
+        Livewire::test(EditPackage::class, ['record' => $package->id])
+            ->assertSchemaStateSet(['has_registration_fee' => true])
+            ->fillForm(['has_registration_fee' => false])
+            ->call('save')
+            ->assertHasNoFormErrors();
+        $this->assertEquals(0, $package->fresh()->registration_fee);
     }
 
     public function test_full_package_requires_flights_and_includes_transfers(): void

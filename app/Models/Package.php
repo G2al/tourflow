@@ -47,12 +47,37 @@ class Package extends Model
                 $package->transfer_included = true;
             }
 
-            // Escursioni e transfer si svolgono in giornata.
+            // Soggiorno minimo facoltativo: 1 = nessun minimo. Escursioni e
+            // transfer si svolgono in giornata.
+            $package->min_nights = max(1, (int) $package->min_nights);
+            $package->nights = $offer->isStay() ? $package->min_nights : 0;
+
             if (! $offer->isStay()) {
-                $package->nights = 0;
                 $package->hotel_id = null;
             }
+
+            if (blank($package->title)) {
+                $package->title = static::autoTitle(
+                    $offer,
+                    $package->destination?->name ?? Destination::find($package->destination_id)?->name,
+                    $package->hotel_id ? Hotel::find($package->hotel_id)?->name : null,
+                );
+            }
         });
+    }
+
+    /**
+     * Titolo proposto in base a cosa si vende, dove e con quale hotel
+     * (es. "Soggiorno a Hurghada · Red Sea Paradise Resort").
+     */
+    public static function autoTitle(PackageOffer $offer, ?string $destination, ?string $hotel = null): string
+    {
+        $what = match ($offer) {
+            PackageOffer::HotelOnly => 'Soggiorno',
+            default => $offer->getLabel(),
+        };
+
+        return trim($what.($destination ? " a {$destination}" : '').($offer->isStay() && $hotel ? " · {$hotel}" : ''));
     }
 
     protected $fillable = [
@@ -170,9 +195,39 @@ class Package extends Model
         return $this->price_unit === PriceUnit::PerService;
     }
 
+    /**
+     * Notti mostrate nel catalogo: quelle del volo più conveniente per le
+     * offerte con volo, il soggiorno minimo per il solo soggiorno, 0 per
+     * escursioni e transfer.
+     */
+    public function displayNights(): int
+    {
+        if (! $this->isStay()) {
+            return 0;
+        }
+
+        if ($this->offer?->includesFlight()) {
+            return $this->cheapestFlightOption()['flight']?->nights() ?? max(1, $this->min_nights);
+        }
+
+        return max(1, $this->min_nights);
+    }
+
     public function days(): int
     {
-        return $this->nights + 1;
+        return $this->displayNights() + 1;
+    }
+
+    /**
+     * Su cosa è calcolato il prezzo "a partire da".
+     */
+    public function priceBasis(): string
+    {
+        return match ($this->offer) {
+            PackageOffer::HotelOnly => 'per_night',
+            PackageOffer::Transfer => 'per_service',
+            default => 'per_person',
+        };
     }
 
     public function periodFor(CarbonInterface $date): ?PackagePeriod
@@ -225,35 +280,41 @@ class Package extends Model
     }
 
     /**
-     * Prezzo "a partire da" mostrato nel catalogo, a persona: per i soggiorni
-     * è la quota a notte più bassa per le notti consigliate, più il volo più
-     * economico quando il volo è compreso (volo + hotel, pacchetto completo).
+     * Prezzo "a partire da" mostrato nel catalogo (vedi priceBasis()):
+     * - solo soggiorno: la quota a notte più bassa;
+     * - volo + hotel e pacchetto completo: a persona, hotel per le notti del
+     *   volo più il volo, sulla combinazione più conveniente;
+     * - escursione: a persona; transfer: a servizio.
      */
     public function startingPrice(): ?float
     {
-        $base = $this->lowestBasePrice();
-
-        if ($base === null) {
-            return null;
-        }
-
-        if (! $this->isStay()) {
-            return $base;
-        }
-
-        $price = $base * max(1, $this->nights);
-
         if ($this->offer?->includesFlight()) {
-            $flight = $this->bookableFlights->min('adult_price');
-
-            if ($flight === null) {
-                return null;
-            }
-
-            $price += (float) $flight;
+            return $this->cheapestFlightOption()['total'];
         }
 
-        return round($price, 2);
+        return $this->lowestBasePrice();
+    }
+
+    /**
+     * Combinazione volo + hotel più economica tra i voli abbinati, stimata con
+     * la quota a notte più bassa.
+     *
+     * @return array{flight: Flight|null, total: float|null}
+     */
+    public function cheapestFlightOption(): array
+    {
+        $nightly = $this->lowestBasePrice();
+
+        if ($nightly === null) {
+            return ['flight' => null, 'total' => null];
+        }
+
+        $best = $this->bookableFlights
+            ->map(fn (Flight $flight) => ['flight' => $flight, 'total' => round($nightly * $flight->nights() + (float) $flight->adult_price, 2)])
+            ->sortBy('total')
+            ->first();
+
+        return $best ?? ['flight' => null, 'total' => null];
     }
 
     /**
@@ -293,15 +354,11 @@ class Package extends Model
     }
 
     /**
-     * Testo sintetico del periodo: quello inserito dall'admin oppure ricavato
-     * dai mesi disponibili ("Tutto l'anno", "Novembre - Aprile").
+     * Testo sintetico del periodo, ricavato dai mesi disponibili
+     * ("Tutto l'anno", "Novembre - Aprile").
      */
     public function periodText(): ?string
     {
-        if (filled($this->period_label)) {
-            return $this->period_label;
-        }
-
         $months = $this->availableMonthNumbers();
 
         return match (true) {

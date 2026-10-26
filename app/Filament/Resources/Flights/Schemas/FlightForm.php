@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Flights\Schemas;
 
 use App\Enums\Airport;
+use App\Filament\Support\HelpAction;
 use App\Filament\Support\PriceFields;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -18,7 +19,8 @@ class FlightForm
         return $schema
             ->components([
                 Section::make('Volo andata e ritorno')
-                    ->description('Le notti del "volo + hotel" sono quelle tra andata e ritorno.')
+                    ->description('Le notti del "volo + hotel" sono quelle tra andata e ritorno. Dopo averlo creato, abbinalo ai pacchetti nella sezione "Soggiorno e voli".')
+                    ->afterHeader([HelpAction::make('flights', 'Voli e soggiorno')])
                     ->columns(2)
                     ->columnSpanFull()
                     ->schema([
